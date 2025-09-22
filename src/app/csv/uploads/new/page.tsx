@@ -1,0 +1,608 @@
+"use client";
+
+import * as React from "react";
+import Papa from "papaparse";
+import { supabase } from "@/lib/supabase";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+
+const UNMAPPED = "__UNMAPPED__";
+
+type Supplier = { supplier_id: number; name: string };
+
+type Canonical =
+  | "supplier_sku"
+  | "brand"
+  | "mpn"
+  | "description"
+  | "price_ex_gst"
+  | "uom"
+  | "pack_size";
+
+const CANONICAL_FIELDS: { value: Canonical; label: string; required: boolean }[] = [
+  { value: "supplier_sku", label: "Supplier SKU", required: true },
+  { value: "mpn", label: "Manufacturer Part Number", required: true },
+  { value: "description", label: "Product Description", required: true },
+  { value: "price_ex_gst", label: "Price ex GST", required: true },
+  { value: "brand", label: "Brand (optional — defaults to supplier name)", required: false },
+  { value: "uom", label: "Unit of Measure (optional)", required: false },
+  { value: "pack_size", label: "Pack Size (optional)", required: false },
+];
+
+// yyyy-mm-dd (from <input type="date">) → dd-mm-yyyy for backend
+function ymdToDmy(ymd: string): string {
+  const [y, m, d] = ymd.split("-");
+  return `${d}-${m}-${y}`;
+}
+
+// pretty ms → "2m 20s" or "41s"
+function fmtDuration(ms: number) {
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  const s = Math.round(ms / 1000);
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m > 0 ? `${m}m ${r}s` : `${r}s`;
+}
+
+type Row = Record<string, unknown>;
+type MappingState = Partial<Record<Canonical, string>>;
+
+async function sha256Hex(file: File): Promise<string> {
+  const buf = await file.arrayBuffer();
+  const hash = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(hash))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+export default function Page() {
+  // suppliers
+  const [suppliers, setSuppliers] = React.useState<Supplier[]>([]);
+  const [suppliersLoading, setSuppliersLoading] = React.useState(false);
+  const [selectedSupplierId, setSelectedSupplierId] = React.useState<number | null>(null);
+
+  // inline create supplier
+  const [showCreate, setShowCreate] = React.useState(false);
+  const [newSupplierName, setNewSupplierName] = React.useState("");
+  const [creatingSupplier, setCreatingSupplier] = React.useState(false);
+
+  // csv
+  const [file, setFile] = React.useState<File | null>(null);
+  const [fileName, setFileName] = React.useState<string>("");
+  const [headers, setHeaders] = React.useState<string[]>([]);
+  const [rowsPreview, setRowsPreview] = React.useState<Row[]>([]);
+  const [totalParsed, setTotalParsed] = React.useState<number>(0);
+  const [previewLimit, setPreviewLimit] = React.useState<number>(100);
+
+  // mapping (canonical -> csv header)
+  const [mapping, setMapping] = React.useState<MappingState>({});
+  const [submitting, setSubmitting] = React.useState(false);
+
+  // effective date (global for this upload) — default = today
+  const today = React.useMemo(() => {
+    const t = new Date();
+    const y = t.getFullYear();
+    const m = String(t.getMonth() + 1).padStart(2, "0");
+    const d = String(t.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`; // yyyy-mm-dd for <input type="date">
+  }, []);
+  const [effectiveDateYMD, setEffectiveDateYMD] = React.useState<string>(today);
+
+  // progress UI state
+  const [limitPerBatch] = React.useState(70);
+  const [totalRowsServer, setTotalRowsServer] = React.useState<number | null>(null);
+  const [totalBatches, setTotalBatches] = React.useState<number | null>(null);
+  const [currentBatch, setCurrentBatch] = React.useState<number>(0); // 0-based
+  const [elapsedMs, setElapsedMs] = React.useState<number>(0);
+  const [lastBatchMs, setLastBatchMs] = React.useState<number>(0);
+  const [avgBatchMs, setAvgBatchMs] = React.useState<number>(0);
+  const [etaMs, setEtaMs] = React.useState<number | null>(null);
+
+  // load suppliers
+  React.useEffect(() => {
+    (async () => {
+      setSuppliersLoading(true);
+      const { data, error } = await supabase
+        .from("supplier")
+        .select("supplier_id, name")
+        .order("name", { ascending: true });
+      if (!error && data) setSuppliers(data as Supplier[]);
+      setSuppliersLoading(false);
+    })();
+  }, []);
+
+  const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setFile(f);
+    setFileName(f.name);
+
+    // Parse entire CSV but only keep first N rows for preview
+    const preview: Row[] = [];
+    let count = 0;
+    setHeaders([]); // reset before parsing
+    Papa.parse<Row>(f, {
+      header: true,
+      dynamicTyping: true,
+      skipEmptyLines: "greedy",
+      worker: true,
+      chunkSize: 1024 * 512,
+      chunk: (res) => {
+        if (!headers.length) {
+          const hdrs = res.meta.fields ?? Object.keys(res.data[0] ?? {});
+          setHeaders(hdrs);
+          // initialize mapping to "unmapped" for all canonicals
+          const init: MappingState = {};
+          CANONICAL_FIELDS.forEach((c) => (init[c.value] = undefined as any));
+          setMapping(init);
+        }
+        for (const r of res.data) {
+          count++;
+          if (preview.length < previewLimit) preview.push(r);
+        }
+      },
+      complete: () => {
+        setRowsPreview(preview);
+        setTotalParsed(count);
+      },
+      error: (err) => alert(`Parse error: ${err.message}`),
+    });
+  };
+
+  const onMapCanonical = (canonical: Canonical, csvHeaderOrSentinel: string) => {
+    setMapping((cur) => ({
+      ...cur,
+      [canonical]: csvHeaderOrSentinel === UNMAPPED ? undefined : csvHeaderOrSentinel,
+    }));
+  };
+
+  const selectedSupplier = React.useMemo(
+    () => suppliers.find((s) => s.supplier_id === selectedSupplierId) || null,
+    [suppliers, selectedSupplierId]
+  );
+
+  async function handleCreateSupplier() {
+    const name = newSupplierName.trim();
+    if (!name) return;
+    setCreatingSupplier(true);
+    const { data, error } = await supabase
+      .from("supplier")
+      .insert({ name, is_active: true })
+      .select("supplier_id, name")
+      .single();
+    setCreatingSupplier(false);
+    if (error) {
+      alert(error.message);
+      return;
+    }
+    setSuppliers((prev) =>
+      [...prev, data as Supplier].sort((a, b) => a.name.localeCompare(b.name))
+    );
+    setSelectedSupplierId((data as Supplier).supplier_id);
+    setNewSupplierName("");
+    setShowCreate(false);
+  }
+
+  const handleSubmit = async () => {
+    try {
+      if (!file) return alert("Choose a CSV file");
+      if (!selectedSupplierId) return alert("Select a supplier");
+      if (!effectiveDateYMD) return alert("Please pick an effective date.");
+
+      // validate required canonicals are mapped
+      const missingRequired = CANONICAL_FIELDS
+        .filter((c) => c.required)
+        .filter((c) => !mapping[c.value]);
+      if (missingRequired.length) {
+        return alert(
+          `Please map required fields: ${missingRequired.map((m) => m.label).join(", ")}`
+        );
+      }
+
+      setSubmitting(true);
+
+      // 1) hash & upload file (no bucket name in key)
+      const sha256 = await sha256Hex(file);
+      const storagePath = `${selectedSupplierId}/${sha256}.csv`;
+      const { error: upErr } = await supabase.storage
+        .from("price_uploads")
+        .upload(storagePath, file, { upsert: true, contentType: "text/csv" });
+      if (upErr) throw upErr;
+
+      // 2) create upload row
+      const { data: uploadRow, error: insErr } = await supabase
+        .from("upload")
+        .insert({
+          supplier_id: selectedSupplierId,
+          filename: file.name,
+          sha256,
+          parsed_ok: false,
+        })
+        .select("*")
+        .single();
+      if (insErr) throw insErr;
+
+      // 3) next mapping version for this supplier
+      const { data: latest, error: mapErr } = await supabase
+        .from("column_mapping")
+        .select("mapping_version")
+        .eq("supplier_id", selectedSupplierId)
+        .order("mapping_version", { ascending: false })
+        .limit(1);
+      if (mapErr) throw mapErr;
+      const nextVersion = (latest?.[0]?.mapping_version ?? 0) + 1;
+
+      // 4) insert mapping rows ONLY for canonicals that are mapped
+      const rowsToInsert = Object.entries(mapping)
+        .filter(([, csvHeader]) => !!csvHeader)
+        .map(([canonical_field, csv_header]) => ({
+          supplier_id: selectedSupplierId,
+          csv_header: String(csv_header),
+          canonical_field: canonical_field as Canonical,
+          transform: null as string | null,
+          mapping_version: nextVersion,
+          is_active: true,
+        }));
+
+      if (rowsToInsert.length) {
+        const { error: cmErr } = await supabase
+          .from("column_mapping")
+          .insert(rowsToInsert);
+        if (cmErr) throw cmErr;
+      }
+
+      // 5) trigger ingestion in CHUNKS (70) with live progress
+      // 5) trigger ingestion in CHUNKS (70) with live progress
+        const effective_date_ddmmyyyy = ymdToDmy(effectiveDateYMD);
+
+        // reset progress state (UI)
+        setCurrentBatch(0);
+        setElapsedMs(0);
+        setLastBatchMs(0);
+        setAvgBatchMs(0);
+        setEtaMs(null);
+        setTotalRowsServer(null);
+        setTotalBatches(null);
+
+        const startedAt = Date.now();
+        let nextOffset: number | null = 0;
+        let completedBatches = 0;
+
+        // ---- local mirrors to avoid stale React state reads ----
+        let localTotalRows: number | null = null;
+        let localTotalBatches: number | null = null;
+        let localAvgMs = 0;
+
+        // per-call with timeout
+        async function callChunk(offset: number) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 140_000); // 140s
+
+        try {
+            const resp = await fetch("/api/ingest", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            signal: controller.signal,
+            body: JSON.stringify({
+                upload_id: uploadRow.upload_id,
+                effective_date_ddmmyyyy,
+                offset,
+                limit: limitPerBatch, // 70
+            }),
+            });
+
+            const text = await resp.text();
+            let json: any = text;
+            try { json = JSON.parse(text); } catch {}
+
+            if (!resp.ok) {
+            throw new Error(typeof json === "string" ? json : JSON.stringify(json));
+            }
+            return json as {
+            ok: true;
+            processed: number;
+            nextOffset: number | null;
+            totalRows: number;
+            done: boolean;
+            };
+        } finally {
+            clearTimeout(timeoutId);
+        }
+        }
+
+        while (nextOffset !== null) {
+        const batchStart = Date.now();
+
+        let res;
+        try {
+            res = await callChunk(nextOffset);
+        } catch (err) {
+            // retry once after brief backoff
+            await new Promise((r) => setTimeout(r, 800));
+            res = await callChunk(nextOffset);
+        }
+
+        // initialize totals from server (locals first)
+        if (localTotalRows == null && typeof res.totalRows === "number") {
+            localTotalRows = res.totalRows;
+            localTotalBatches = Math.max(1, Math.ceil(localTotalRows / limitPerBatch));
+            // push to state for UI
+            setTotalRowsServer(localTotalRows);
+            setTotalBatches(localTotalBatches);
+        }
+
+        // advance offset
+        nextOffset = res.done ? null : res.nextOffset;
+
+        // timing
+        const thisBatchMs = Date.now() - batchStart;
+        completedBatches += 1;
+
+        // locals
+        const totalElapsed = Date.now() - startedAt;
+        localAvgMs = Math.round(totalElapsed / completedBatches);
+        const remainingBatches =
+            localTotalBatches != null ? Math.max(0, localTotalBatches - completedBatches) : null;
+        const localEta =
+            remainingBatches != null ? remainingBatches * localAvgMs : null;
+
+        // push to state (UI reads only from state; all calc done in locals)
+        setCurrentBatch(completedBatches - 1); // 0-based
+        setLastBatchMs(thisBatchMs);
+        setElapsedMs(totalElapsed);
+        setAvgBatchMs(localAvgMs);
+        setEtaMs(localEta);
+
+        // allow a paint in case the next chunk returns instantly (rare but nice)
+        await new Promise((r) => setTimeout(r, 0));
+        }
+
+        alert(`Upload saved for supplier "${selectedSupplier?.name}". Ingest completed.`);
+    } catch (e: any) {
+      console.error(e);
+      alert(e?.message ?? "Something went wrong");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="mx-auto max-w-6xl p-6 space-y-6">
+      <h1 className="text-2xl font-semibold tracking-tight">New Price Upload</h1>
+
+      <Card>
+        <CardContent className="p-6 space-y-6">
+          {/* Supplier picker + create */}
+          <div className="space-y-2">
+            <Label>Supplier</Label>
+            <div className="flex flex-wrap gap-2 items-end">
+              <Select
+                value={selectedSupplierId ? String(selectedSupplierId) : ""}
+                onValueChange={(v) => setSelectedSupplierId(Number(v))}
+                disabled={suppliersLoading}
+              >
+                <SelectTrigger className="w-80">
+                  <SelectValue placeholder={suppliersLoading ? "Loading…" : "Select supplier"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {suppliers.map((s) => (
+                    <SelectItem key={s.supplier_id} value={String(s.supplier_id)}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Button variant="outline" onClick={() => setShowCreate((x) => !x)}>
+                {showCreate ? "Cancel" : "New supplier"}
+              </Button>
+            </div>
+
+            {showCreate && (
+              <div className="mt-3 grid gap-2 md:grid-cols-[1fr_auto] items-end">
+                <div className="space-y-2">
+                  <Label htmlFor="supplier_name">New supplier name</Label>
+                  <Input
+                    id="supplier_name"
+                    placeholder="e.g., Amber Technology"
+                    value={newSupplierName}
+                    onChange={(e) => setNewSupplierName(e.target.value)}
+                  />
+                </div>
+                <Button onClick={handleCreateSupplier} disabled={creatingSupplier || !newSupplierName.trim()}>
+                  {creatingSupplier ? "Creating…" : "Create"}
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {/* CSV file */}
+          <div className="space-y-2">
+            <Label htmlFor="csv">CSV File</Label>
+            <Input id="csv" type="file" accept=".csv,text/csv" onChange={onFileChange} />
+            {fileName && (
+              <p className="text-sm text-muted-foreground">
+                Loaded: {fileName} — Parsed rows: {totalParsed.toLocaleString()}
+              </p>
+            )}
+          </div>
+
+          {/* Effective Date (global) */}
+          <div className="space-y-2">
+            <Label htmlFor="effdate">Effective date</Label>
+            <Input
+              id="effdate"
+              type="date"
+              value={effectiveDateYMD}
+              onChange={(e) => setEffectiveDateYMD(e.target.value)}
+              className="w-60"
+            />
+            <p className="text-xs text-muted-foreground">
+              Applies to all rows in this upload. Defaults to today.
+            </p>
+          </div>
+
+          {/* Mapping UI: canonical -> CSV header */}
+          {headers.length > 0 && (
+            <div className="space-y-3">
+              <Label>Map canonical fields to CSV headers</Label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {CANONICAL_FIELDS.map((c) => (
+                  <div key={c.value} className="flex items-center gap-3">
+                    <span className="min-w-0 grow truncate text-sm">
+                      {c.label} {c.required ? <span className="text-red-600">*</span> : null}
+                    </span>
+                    <Select
+                      value={(mapping[c.value] as string | undefined) ?? UNMAPPED}
+                      onValueChange={(v) => onMapCanonical(c.value, v)}
+                    >
+                      <SelectTrigger className="w-72">
+                        <SelectValue placeholder="— Unmapped —" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value={UNMAPPED}>— Unmapped —</SelectItem>
+                        {headers.map((h) => (
+                          <SelectItem key={h} value={h}>
+                            {h}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Brand can be left unmapped; the backend will default it to the supplier name.
+              </p>
+            </div>
+          )}
+
+          {/* CSV preview table */}
+          {headers.length > 0 && rowsPreview.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label>CSV Preview (first {rowsPreview.length} of {totalParsed.toLocaleString()} rows)</Label>
+                <div className="flex gap-2 items-center">
+                  <Label htmlFor="limit" className="text-xs text-muted-foreground">Rows to preview</Label>
+                  <Input
+                    id="limit"
+                    type="number"
+                    value={previewLimit}
+                    min={10}
+                    max={5000}
+                    className="w-24 h-8"
+                    onChange={(e) => {
+                      const v = Math.max(10, Math.min(5000, Number(e.target.value || 100)));
+                      setPreviewLimit(v);
+                      if (file) {
+                        const evt = { target: { files: [file] } } as unknown as React.ChangeEvent<HTMLInputElement>;
+                        onFileChange(evt);
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+              <div className="rounded-md border overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      {headers.map((h) => (
+                        <TableHead key={h} className="whitespace-nowrap">
+                          {h}
+                        </TableHead>
+                      ))}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {rowsPreview.map((row, idx) => (
+                      <TableRow key={idx}>
+                        {headers.map((h) => (
+                          <TableCell key={h} className="whitespace-nowrap">
+                            {String((row as any)[h] ?? "")}
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          )}
+
+          {/* Live progress */}
+          {(submitting || totalRowsServer !== null) && (
+            <div className="rounded-md border p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium">
+                  {totalBatches != null ? (
+                    <>Batch {Math.min(currentBatch + 1, totalBatches)} / {totalBatches}</>
+                  ) : (
+                    <>Calculating batches…</>
+                  )}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {totalRowsServer != null ? `${totalRowsServer.toLocaleString()} rows · ${limitPerBatch} per batch` : "—"}
+                </div>
+              </div>
+
+              <div className="h-2 w-full bg-muted rounded">
+                <div
+                  className="h-2 bg-primary rounded transition-all"
+                  style={{
+                    width:
+                      totalBatches != null
+                        ? `${Math.min(100, ((currentBatch + 1) / totalBatches) * 100)}%`
+                        : "0%",
+                  }}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="space-y-0.5">
+                  <div className="text-muted-foreground">Last batch</div>
+                  <div className="font-medium">{fmtDuration(lastBatchMs)}</div>
+                </div>
+                <div className="space-y-0.5">
+                  <div className="text-muted-foreground">Avg / batch</div>
+                  <div className="font-medium">{fmtDuration(avgBatchMs)}</div>
+                </div>
+                <div className="space-y-0.5">
+                  <div className="text-muted-foreground">Elapsed</div>
+                  <div className="font-medium">{fmtDuration(elapsedMs)}</div>
+                </div>
+                <div className="space-y-0.5">
+                  <div className="text-muted-foreground">ETA</div>
+                  <div className="font-medium">{etaMs == null ? "—" : fmtDuration(etaMs)}</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Submit */}
+          {headers.length > 0 && (
+            <Button onClick={handleSubmit} disabled={submitting || !selectedSupplierId}>
+              {submitting ? "Submitting…" : "Save mapping & ingest"}
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
