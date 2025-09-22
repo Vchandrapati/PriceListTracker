@@ -3,6 +3,7 @@
 import * as React from "react";
 import Papa from "papaparse";
 import { supabase } from "@/lib/supabase";
+import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -83,7 +84,7 @@ export default function Page() {
   const [newSupplierName, setNewSupplierName] = React.useState("");
   const [creatingSupplier, setCreatingSupplier] = React.useState(false);
 
-  // csv
+  // (dashboard)
   const [file, setFile] = React.useState<File | null>(null);
   const [fileName, setFileName] = React.useState<string>("");
   const [headers, setHeaders] = React.useState<string[]>([]);
@@ -91,7 +92,7 @@ export default function Page() {
   const [totalParsed, setTotalParsed] = React.useState<number>(0);
   const [previewLimit, setPreviewLimit] = React.useState<number>(100);
 
-  // mapping (canonical -> csv header)
+  // mapping (canonical -> (dashboard) header)
   const [mapping, setMapping] = React.useState<MappingState>({});
   const [submitting, setSubmitting] = React.useState(false);
 
@@ -223,7 +224,7 @@ export default function Page() {
       const storagePath = `${selectedSupplierId}/${sha256}.csv`;
       const { error: upErr } = await supabase.storage
         .from("price_uploads")
-        .upload(storagePath, file, { upsert: true, contentType: "text/csv" });
+        .upload(storagePath, file, { upsert: true, contentType: "text/(dashboard)" });
       if (upErr) throw upErr;
 
       // 2) create upload row
@@ -385,7 +386,14 @@ export default function Page() {
 
   return (
     <div className="mx-auto max-w-6xl p-6 space-y-6">
-      <h1 className="text-2xl font-semibold tracking-tight">New Price Upload</h1>
+      <PageHeader
+          title="New Upload"
+          description="Map columns and ingest your price list."
+          breadcrumbs={[
+            { href: "/", label: "Home" },
+            { label: "New Upload" },
+          ]}
+      />
 
       <Card>
         <CardContent className="p-6 space-y-6">

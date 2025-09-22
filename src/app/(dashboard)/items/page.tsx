@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { supabase } from "@/lib/supabase";
+import { PageHeader } from "@/components/page-header";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -80,46 +81,51 @@ export default function ItemsPage() {
     setRows([]);
     setTotal(null);
 
+    // NEW: build the select string conditionally.
+    // When a brand is chosen, use !inner joins so rows with no brand/mpn are omitted.
+    const selectCols = `
+    supplier_product_id,
+    supplier_id,
+    supplier:supplier_id(name),
+    ${brandId ? "catalog_product:catalog_product_id!inner(" : "catalog_product:catalog_product_id("}
+      catalog_product_id,
+      mpn,
+      description,
+      ${brandId ? "brand:brand_id!inner(brand_id,name)" : "brand:brand_id(brand_id,name)"}
+    ),
+    supplier_sku,
+    supplier_description,
+    uom,
+    pack_size,
+    price_history:price_history(
+      price_id,
+      price_ex_gst,
+      effective
+    )
+  `;
+
     let query = supabase
-      .from("supplier_product")
-      .select(
-        `
-        supplier_product_id,
-        supplier_id,
-        supplier:supplier_id(name),
-        catalog_product:catalog_product_id(
-          catalog_product_id,
-          mpn,
-          description,
-          brand:brand_id(brand_id,name)
-        ),
-        supplier_sku,
-        supplier_description,
-        uom,
-        pack_size,
-        price_history:price_history(
-          price_id,
-          price_ex_gst,
-          effective
-        )
-        `,
-        { count: "exact" }
-      )
-      .order("price_id", { foreignTable: "price_history", ascending: false })
-      .limit(1, { foreignTable: "price_history" });
+        .from("supplier_product")
+        // CHANGED: use the selectCols string instead of the inline select
+        .select(selectCols, { count: "exact" })
+        .order("price_id", { foreignTable: "price_history", ascending: false })
+        .limit(1, { foreignTable: "price_history" });
 
     if (supplierId) query = query.eq("supplier_id", Number(supplierId));
-    if (brandId) query = query.eq("catalog_product.brand_id", Number(brandId));
+    if (brandId) {
+      // keep the brand filter; inner join already removes null/mismatched rows
+      query = query.eq("catalog_product.brand_id", Number(brandId));
+    }
 
     if (searchDeb) {
       const like = `%${searchDeb}%`;
       query = query.or(
-        [
-          `supplier_sku.ilike.${like}`,
-          `supplier_description.ilike.${like}`,
-          `catalog_product.mpn.ilike.${like}`,
-          `catalog_product.description.ilike.${like}`,
-        ].join(",")
+          [
+            `supplier_sku.ilike.${like}`,
+            `supplier_description.ilike.${like}`,
+            `catalog_product.mpn.ilike.${like}`,
+            `catalog_product.description.ilike.${like}`,
+          ].join(",")
       );
     }
 
@@ -169,8 +175,14 @@ export default function ItemsPage() {
 
   return (
     <div className="mx-auto max-w-7xl p-6 space-y-6">
-      <h1 className="text-2xl font-semibold tracking-tight">Items</h1>
-
+      <PageHeader
+          title="Items"
+          description="Search by supplier, manufacturer, or text."
+          breadcrumbs={[
+            { href: "/", label: "Home" },
+            { label: "Items" },
+          ]}
+      />
       <Card>
         <CardContent className="p-6 space-y-4">
           {/* Filters */}
