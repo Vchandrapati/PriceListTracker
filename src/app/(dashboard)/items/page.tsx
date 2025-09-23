@@ -108,7 +108,7 @@ export default function ItemsPage() {
         .from("supplier_product")
         // CHANGED: use the selectCols string instead of the inline select
         .select(selectCols, { count: "exact" })
-        .order("price_id", { foreignTable: "price_history", ascending: false })
+        .order("start_date", { foreignTable: "price_history", ascending: false })
         .limit(1, { foreignTable: "price_history" });
 
     if (supplierId) query = query.eq("supplier_id", Number(supplierId));
