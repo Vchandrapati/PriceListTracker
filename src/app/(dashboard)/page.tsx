@@ -25,6 +25,14 @@ export default function Home() {
                         <Link className="underline underline-offset-4" href="/uploads/new">Open</Link>
                     </CardContent>
                 </Card>
+
+                <Card>
+                    <CardContent className="p-6 space-y-2">
+                        <h3 className="font-medium">Export</h3>
+                        <p className="text-sm text-muted-foreground">Export suppliers to simpro.</p>
+                        <Link className="underline underline-offset-4" href="/export">Open</Link>
+                    </CardContent>
+                </Card>
             </div>
         </div>
     );

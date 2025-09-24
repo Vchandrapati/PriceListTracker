@@ -65,7 +65,7 @@ function fmtDuration(ms: number) {
 type Row = Record<string, unknown>;
 type MappingState = Partial<Record<Canonical, string>>;
 
-// ---- NEW: safe header option type
+// safe header option type
 type HeaderOpt = { key: string; label: string; value: string };
 
 async function sha256Hex(file: File): Promise<string> {
@@ -110,7 +110,7 @@ export default function Page() {
     const [mapping, setMapping] = React.useState<MappingState>({});
     const [submitting, setSubmitting] = React.useState(false);
 
-    // effective date (global for this upload) — default = today
+    // effective date (global) — default = today
     const today = React.useMemo(() => {
         const t = new Date();
         const y = t.getFullYear();
@@ -181,7 +181,7 @@ export default function Page() {
         });
     };
 
-    // ---- NEW: derive safe header options & lookup maps
+    // safe header options
     const headerOpts = React.useMemo<HeaderOpt[]>(() => {
         return headers.map((h, idx) => {
             const value = String(h ?? "");
@@ -208,7 +208,7 @@ export default function Page() {
         return m;
     }, [headerOpts]);
 
-    // ---- UPDATED: map canonical using UI key -> real header value
+    // map canonical using UI key -> real header value
     const onMapCanonical = (canonical: Canonical, keyOrSentinel: string) => {
         setMapping((cur) => {
             if (keyOrSentinel === UNMAPPED) return { ...cur, [canonical]: undefined as any };
@@ -262,12 +262,12 @@ export default function Page() {
 
             setSubmitting(true);
 
-            // 1) hash & upload file (no bucket name in key)
+            // 1) hash & upload file
             const sha256 = await sha256Hex(file);
             const storagePath = `${selectedSupplierId}/${sha256}.csv`;
             const { error: upErr } = await supabase.storage
                 .from("price_uploads")
-                .upload(storagePath, file, { upsert: true, contentType: "text/csv" }); // fixed
+                .upload(storagePath, file, { upsert: true, contentType: "text/csv" });
             if (upErr) throw upErr;
 
             // 2) create upload row
@@ -283,36 +283,14 @@ export default function Page() {
                 .single();
             if (insErr) throw insErr;
 
-            // 3) next mapping version for this supplier
-            const { data: latest, error: mapErr } = await supabase
-                .from("column_mapping")
-                .select("mapping_version")
-                .eq("supplier_id", selectedSupplierId)
-                .order("mapping_version", { ascending: false })
-                .limit(1);
-            if (mapErr) throw mapErr;
-            const nextVersion = (latest?.[0]?.mapping_version ?? 0) + 1;
+            // --- BUILD WIRE MAPPING (only mapped canonicals go over the wire) ---
+            const wireMapping: Partial<Record<Canonical, string>> = {};
+            (Object.keys(mapping) as Canonical[]).forEach((k) => {
+                const v = mapping[k];
+                if (v != null && v !== "") wireMapping[k] = v;
+            });
 
-            // 4) insert mapping rows ONLY for canonicals that are mapped
-            const rowsToInsert = Object.entries(mapping)
-                .filter(([, csvHeader]) => !!csvHeader)
-                .map(([canonical_field, csv_header]) => ({
-                    supplier_id: selectedSupplierId,
-                    csv_header: String(csv_header),
-                    canonical_field: canonical_field as Canonical,
-                    transform: null as string | null,
-                    mapping_version: nextVersion,
-                    is_active: true,
-                }));
-
-            if (rowsToInsert.length) {
-                const { error: cmErr } = await supabase
-                    .from("column_mapping")
-                    .insert(rowsToInsert);
-                if (cmErr) throw cmErr;
-            }
-
-            // 5) trigger ingestion in CHUNKS (70) with live progress
+            // 3) trigger ingestion in CHUNKS (70) with live progress
             const effective_date_ddmmyyyy = ymdToDmy(effectiveDateYMD);
 
             // reset progress state (UI)
@@ -328,7 +306,7 @@ export default function Page() {
             let nextOffset: number | null = 0;
             let completedBatches = 0;
 
-            // locals to avoid stale state
+            // locals
             let localTotalRows: number | null = null;
             let localTotalBatches: number | null = null;
             let localAvgMs = 0;
@@ -347,6 +325,7 @@ export default function Page() {
                             effective_date_ddmmyyyy,
                             offset,
                             limit: limitPerBatch,
+                            mapping: wireMapping, // <-- SEND MAPPING TO EDGE FUNCTION
                         }),
                     });
 
@@ -378,6 +357,7 @@ export default function Page() {
                 try {
                     res = await callChunk(nextOffset);
                 } catch (err) {
+                    // retry once
                     await new Promise((r) => setTimeout(r, 800));
                     res = await callChunk(nextOffset);
                 }
@@ -535,7 +515,6 @@ export default function Page() {
                                 ))}
                             </div>
 
-                            {/* Optional heads-up if there were empty headers */}
                             {headerOpts.some((o) => o.value.trim() === "") && (
                                 <p className="text-xs text-amber-600">
                                     This CSV contains one or more empty header cells. They appear as “(Empty header #N)”.
