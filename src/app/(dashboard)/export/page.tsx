@@ -9,21 +9,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
+    Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
-    Popover,
-    PopoverTrigger,
-    PopoverContent,
+    Popover, PopoverTrigger, PopoverContent,
 } from "@/components/ui/popover";
 import { Command, CommandGroup, CommandItem, CommandInput } from "@/components/ui/command";
-import { cn } from "@/lib/utils";
 
 // ---------- Types ----------
 type Supplier = { supplier_id: number; name: string };
@@ -44,11 +36,29 @@ type PriceRow = {
     price_id: number;
     supplier_product_id: number;
     price_ex_gst: number;
-    effective: string; // daterange text
-    start_date: string; // generated via default lower(effective)
+    effective: string;
+    start_date: string;
 };
 
 // ---------- Helpers ----------
+async function selectPaged<T>(
+    build: (from: number, to: number) => ReturnType<typeof supabase.from<any>["select"]>,
+    pageSize = 1000
+): Promise<T[]> {
+    const all: T[] = [];
+    let from = 0;
+    for (;;) {
+        const to = from + pageSize - 1;
+        const { data, error } = await build(from, to);
+        if (error) throw error;
+        const batch = (data as T[]) ?? [];
+        all.push(...batch);
+        if (batch.length < pageSize) break;
+        from += pageSize;
+    }
+    return all;
+}
+
 function toISODate(date: Date) {
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, "0");
@@ -66,8 +76,7 @@ function chunk<T>(arr: T[], n = 500) {
     return out;
 }
 
-// We will try to fetch the real template headers from /Catalogue-Import-Template-AU.csv at runtime.
-// If not found, we fall back to this minimal list (your real importer likely needs the exact names).
+// Fallback headers (includes Group/Subgroups + the 6 you care about)
 const FALLBACK_HEADERS = [
     "Group (Ignored for Updates)",
     "Subgroup 1 (Ignored for Updates)",
@@ -75,50 +84,36 @@ const FALLBACK_HEADERS = [
     "Subgroup 3 (Ignored for Updates)",
     "Part Number",
     "Description",
-    "Universal Product Code",
-    "Country of Origin",
     "Trade Price",
     "Cost Price",
-    "Split Price",
     "Split Cost Price",
-    "Purchase Tax Code",
-    "Sales Tax Code",
-    "Trade Split Quantity",
-    "Minimum Pack Quantity",
     "Manufacturer",
-    "Supplier Part Number",
-    "Favourite",
-    "Search Terms",
-    "Purchase Stage",
-    "Inventory Item",
-    "Notes",
-    "Unit of Measurement",
-    "Add-on Enabled",
-    "Markup (Tier 1 Name)",
-    "Sell Price (Tier 1 Name)",
-    "Add-on Markup (Tier 1 Name)",
-    "Add-on Sell Price (Tier 1 Name)",
-    "Markup (Tier 2 Name)",
-    "Sell Price (Tier 2 Name)",
-    "Add-on Markup (Tier 2 Name)",
-    "Add-on Sell Price (Tier 2 Name)",
 ];
 
-// Which headers we populate and how we map from DB fields
+// Headers we populate
 const HEADER_KEYS = {
-    description: ["Description", "Supplier Description"], // we will fill any header that contains "Description" safely
-    upc: "Universal Product Code",
+    description: "Description",
     trade: "Trade Price",
     cost: "Cost Price",
-    splitPrice: "Split Price",
     splitCost: "Split Cost Price",
-    purchaseTax: "Purchase Tax Code",
-    salesTax: "Sales Tax Code",
     manufacturer: "Manufacturer",
-    supplierPart: ["Supplier Part Number", "Part Number"],
-    uom: ["Unit of Measurement"],
-    markupTier1: "Markup (Tier 1 Name)",
+    partNumber: "Part Number",
+
+    group: ["Group (Ignored for Updates)", "Group"],
+    subgroup1: ["Subgroup 1 (Ignored for Updates)", "Subgroup 1"],
+    subgroup2: ["Subgroup 2 (Ignored for Updates)", "Subgroup 2"],
+    subgroup3: ["Subgroup 3 (Ignored for Updates)", "Subgroup 3"],
 };
+
+function pickHeader(headers: string[], names: string | string[]) {
+    const list = Array.isArray(names) ? names : [names];
+    const lower = headers.map((h) => h.toLowerCase());
+    for (const n of list) {
+        const idx = lower.indexOf(String(n).toLowerCase());
+        if (idx !== -1) return headers[idx];
+    }
+    return null;
+}
 
 export default function ExportPage() {
     // ---------------- State ----------------
@@ -130,11 +125,72 @@ export default function ExportPage() {
     const [selectedBrands, setSelectedBrands] = React.useState<string[]>([]);
 
     const [loading, setLoading] = React.useState(false);
-    const [rows, setRows] = React.useState<
-        (SupplierProduct & { price_ex_gst: number | null })[]
-    >([]);
+    const [rows, setRows] = React.useState<(SupplierProduct & { price_ex_gst: number | null })[]>([]);
 
     const [templateHeaders, setTemplateHeaders] = React.useState<string[] | null>(null);
+
+    // ----- simPRO cross-reference state -----
+    const [simproHeaders, setSimproHeaders] = React.useState<string[] | null>(null);
+    const [simproRows, setSimproRows] = React.useState<Record<string, any>[]>([]);
+    const [simproFileName, setSimproFileName] = React.useState<string>("");
+    const [includeEOL, setIncludeEOL] = React.useState(true);
+
+    // Build an index from simPRO: Part Number -> { group/subgroups, plus handy fields if needed }
+    const simproIndex = React.useMemo(() => {
+        const map = new Map<
+            string,
+            { group?: string; subgroup1?: string; subgroup2?: string; subgroup3?: string; manufacturer?: string; mpn?: string }
+        >();
+        if (!simproRows.length || !simproHeaders) return map;
+
+        const spnH = pickHeader(simproHeaders, ["Supplier Part Number", "Part Number"]);
+        if (!spnH) return map;
+
+        const gH  = pickHeader(simproHeaders, ["Group (Ignored for Updates)", "Group"]);
+        const s1H = pickHeader(simproHeaders, ["Subgroup 1 (Ignored for Updates)", "Subgroup 1"]);
+        const s2H = pickHeader(simproHeaders, ["Subgroup 2 (Ignored for Updates)", "Subgroup 2"]);
+        const s3H = pickHeader(simproHeaders, ["Subgroup 3 (Ignored for Updates)", "Subgroup 3"]);
+        const manH = pickHeader(simproHeaders, "Manufacturer");
+        const mpnH = pickHeader(simproHeaders, ["Universal Product Code", "UPC", "MPN"]);
+
+        for (const r of simproRows) {
+            const sku = String(r[spnH] ?? "").trim();
+            if (!sku) continue;
+            map.set(sku, {
+                group: gH ? String(r[gH] ?? "") : "",
+                subgroup1: s1H ? String(r[s1H] ?? "") : "",
+                subgroup2: s2H ? String(r[s2H] ?? "") : "",
+                subgroup3: s3H ? String(r[s3H] ?? "") : "",
+                manufacturer: manH ? String(r[manH] ?? "") : "",
+                mpn: mpnH ? String(r[mpnH] ?? "") : "",
+            });
+        }
+        return map;
+    }, [simproRows, simproHeaders]);
+
+    // Items in simPRO but missing from new export (EOL candidates)
+    const eolCandidates = React.useMemo(() => {
+        if (!simproRows.length || !simproHeaders) return [] as Array<{
+            supplier_part: string; manufacturer: string; mpn: string;
+        }>;
+        const skuSet = new Set((rows || []).map(r => (r.supplier_sku ?? "").trim()).filter(Boolean));
+        const spnH = pickHeader(simproHeaders, ["Supplier Part Number", "Part Number"]);
+        const manH = pickHeader(simproHeaders, "Manufacturer");
+        const mpnH = pickHeader(simproHeaders, ["Universal Product Code", "UPC", "MPN"]);
+        if (!spnH) return [];
+
+        const out: Array<{ supplier_part: string; manufacturer: string; mpn: string; }> = [];
+        for (const r of simproRows) {
+            const sku = String(r[spnH] ?? "").trim();
+            if (!sku || skuSet.has(sku)) continue;
+            out.push({
+                supplier_part: sku,
+                manufacturer: manH ? String(r[manH] ?? "") : "",
+                mpn: mpnH ? String(r[mpnH] ?? "") : "",
+            });
+        }
+        return out;
+    }, [simproRows, simproHeaders, rows]);
 
     // ---------------- Effects ----------------
     React.useEffect(() => {
@@ -152,17 +208,22 @@ export default function ExportPage() {
     React.useEffect(() => {
         if (!supplierId) return;
         (async () => {
-            const { data, error } = await supabase
-                .from("supplier_product")
-                .select("brand")
-                .eq("supplier_id", supplierId)
-                .eq("is_active", true);
-            if (error) return;
-            const uniq = Array.from(
-                new Set((data as { brand: string | null }[]).map((r) => (r.brand ?? "").trim()))
-            )
+            const makeBase = () =>
+                supabase
+                    .from("supplier_product")
+                    .select("brand")
+                    .eq("supplier_id", supplierId)
+                    .eq("is_active", true)
+                    .order("supplier_product_id", { ascending: true });
+
+            const brandRows = await selectPaged<{ brand: string | null }>((from, to) =>
+                makeBase().range(from, to)
+            );
+
+            const uniq = Array.from(new Set(brandRows.map((r) => (r.brand ?? "").trim())))
                 .filter(Boolean)
                 .sort((a, b) => a.localeCompare(b));
+
             setBrands(uniq);
             setSelectedBrands([]);
             setRows([]);
@@ -191,28 +252,26 @@ export default function ExportPage() {
         if (!supplierId) return;
         setLoading(true);
         try {
-            // 1) products by supplier + brand filter
-            let q = supabase
-                .from("supplier_product")
-                .select(
-                    "supplier_product_id, supplier_id, supplier_sku, supplier_description, is_active, uom, pack_size, brand, mpn"
-                )
-                .eq("supplier_id", supplierId)
-                .eq("is_active", true);
+            const makeBase = () =>
+                supabase
+                    .from("supplier_product")
+                    .select(
+                        "supplier_product_id, supplier_id, supplier_sku, supplier_description, is_active, uom, pack_size, brand, mpn"
+                    )
+                    .eq("supplier_id", supplierId)
+                    .eq("is_active", true)
+                    .order("supplier_product_id", { ascending: true });
 
-            if (selectedBrands.length) {
-                // PostgREST in. operator needs array of unique strings
-                // We'll chunk if too large, but usually this is fine
-                q = q.in("brand", selectedBrands);
-            }
-
-            const { data: products, error } = await q.limit(10000);
-            if (error) throw error;
+            const products = await selectPaged<SupplierProduct>((from, to) => {
+                let b = makeBase();
+                if (selectedBrands.length) b = b.in("brand", selectedBrands);
+                return b.range(from, to);
+            });
 
             const prods = (products as SupplierProduct[]) ?? [];
             const ids = prods.map((p) => p.supplier_product_id);
 
-            // 2) active price rows: effective overlaps [today, tomorrow)
+            // active price rows overlapping [today, tomorrow)
             const today = new Date();
             const iso = toISODate(today);
             const next = toISODate(addDays(today, 1));
@@ -241,85 +300,104 @@ export default function ExportPage() {
     }
 
     // ---------------- Export ----------------
-    function pickHeader(headers: string[], names: string | string[]) {
-        const list = Array.isArray(names) ? names : [names];
-        const lower = headers.map((h) => h.toLowerCase());
-        for (const n of list) {
-            const idx = lower.indexOf(n.toLowerCase());
-            if (idx !== -1) return headers[idx];
-        }
-        return null;
-    }
-
     function makeCsv(): string {
         const hdrs = templateHeaders ?? FALLBACK_HEADERS;
 
-        // Build rows as object keyed by header -> value
-        const output: Record<string, string | number | null>[] = [];
-
-        // Resolve target header names present in template (robust to exact naming)
         const H = {
-            description1: pickHeader(hdrs, HEADER_KEYS.description),
-            upc: pickHeader(hdrs, HEADER_KEYS.upc),
+            description: pickHeader(hdrs, HEADER_KEYS.description),
             trade: pickHeader(hdrs, HEADER_KEYS.trade),
             cost: pickHeader(hdrs, HEADER_KEYS.cost),
-            splitPrice: pickHeader(hdrs, HEADER_KEYS.splitPrice),
             splitCost: pickHeader(hdrs, HEADER_KEYS.splitCost),
-            purchaseTax: pickHeader(hdrs, HEADER_KEYS.purchaseTax),
-            salesTax: pickHeader(hdrs, HEADER_KEYS.salesTax),
             manufacturer: pickHeader(hdrs, HEADER_KEYS.manufacturer),
-            supplierPart: pickHeader(hdrs, HEADER_KEYS.supplierPart),
-            uom: pickHeader(hdrs, HEADER_KEYS.uom),
-            markupTier1: pickHeader(hdrs, HEADER_KEYS.markupTier1),
-            partNumber: pickHeader(hdrs, "Part Number"),
+            partNumber: pickHeader(hdrs, HEADER_KEYS.partNumber),
+
+            group: pickHeader(hdrs, HEADER_KEYS.group),
+            subgroup1: pickHeader(hdrs, HEADER_KEYS.subgroup1),
+            subgroup2: pickHeader(hdrs, HEADER_KEYS.subgroup2),
+            subgroup3: pickHeader(hdrs, HEADER_KEYS.subgroup3),
         } as const;
 
-        const hdrSet = new Set(hdrs);
+        const supplierName = suppliers.find(s => s.supplier_id === supplierId)?.name ?? "";
 
+        // Build rows as object keyed by all template headers (others left blank)
+        const output: Record<string, string | number | null>[] = [];
+
+        // 1) Normal rows
         for (const r of rows) {
             const price = r.price_ex_gst ?? 0;
             const row: Record<string, string | number | null> = {};
-
-            // fill all headers with blank by default so column count matches exactly
             for (const h of hdrs) row[h] = "";
 
-            // Mappings per your spec
-            if (H.description1) { const formatted = [r.brand, r.mpn, r.supplier_description].filter(Boolean).join(" • "); row[H.description1] = formatted; }
-            if (H.upc) row[H.upc] = r.mpn ?? ""; // Universal Product Code = MPN
-
-            if (H.trade) row[H.trade] = price;
-            if (H.cost) row[H.cost] = price;
-            if (H.splitPrice) row[H.splitPrice] = price;
-            if (H.splitCost) row[H.splitCost] = price;
-
-            if (H.purchaseTax) row[H.purchaseTax] = "Default"; // Purchase Tax Code
-            if (H.salesTax) row[H.salesTax] = "Default"; // Sales Tax Code
-
-            if (H.manufacturer) row[H.manufacturer] = r.brand ?? ""; // Manufacturer = brand
-
-            if (H.supplierPart) row[H.supplierPart] = r.supplier_sku ?? ""; // Supplier Part Number = supplier_sku
-
-            // UOM forced to ea
-            if (H.uom) row[H.uom] = "ea";
-
-            // Default markup 25
-            if (H.markupTier1) row[H.markupTier1] = 25;
-
-            // Optional: also set Part Number = supplier_sku if present and Supplier Part Number header missing in template
-            if (H.supplierPart) row[H.supplierPart] = r.supplier_sku ?? "";
+            // Part Number
             if (H.partNumber) row[H.partNumber] = r.supplier_sku ?? "";
 
+            // Description: Brand • MPN • Description
+            if (H.description) {
+                row[H.description] = [r.brand, r.mpn, r.supplier_description].filter(Boolean).join(" • ");
+            }
+
+            // Prices
+            if (H.trade) row[H.trade] = price;
+            if (H.cost) row[H.cost] = price;
+            if (H.splitCost) row[H.splitCost] = price;
+
+            // Manufacturer = brand
+            if (H.manufacturer) row[H.manufacturer] = r.brand ?? "";
+
+            // Copy Group/Subgroups from simPRO by Part Number (supplier_sku)
+            const sku = String(r.supplier_sku ?? "");
+            const g = simproIndex.get(sku);
+            if (g) {
+                if (H.group && g.group) row[H.group] = g.group;
+                if (H.subgroup1 && g.subgroup1) row[H.subgroup1] = g.subgroup1;
+                if (H.subgroup2 && g.subgroup2) row[H.subgroup2] = g.subgroup2;
+                if (H.subgroup3 && g.subgroup3) row[H.subgroup3] = g.subgroup3;
+            }
+
             output.push(row);
+        }
+
+        // 2) Append EOL items (present in simPRO but missing)
+        if (includeEOL && eolCandidates.length) {
+            for (const e of eolCandidates) {
+                const row: Record<string, string | number | null> = {};
+                for (const h of hdrs) row[h] = "";
+
+                // Part Number (Supplier Part Number from simPRO)
+                if (H.partNumber) row[H.partNumber] = e.supplier_part;
+
+                // Description: ***EOL*** Brand • MPN • Supplier
+                if (H.description) {
+                    row[H.description] = `***EOL*** ${[e.manufacturer, e.mpn, supplierName].filter(Boolean).join(" • ")}`;
+                }
+
+                // Prices -> 0
+                if (H.trade) row[H.trade] = 0;
+                if (H.cost) row[H.cost] = 0;
+                if (H.splitCost) row[H.splitCost] = 0;
+
+                // Manufacturer = brand from simPRO
+                if (H.manufacturer) row[H.manufacturer] = e.manufacturer ?? "";
+
+                // Copy Group/Subgroups for EOL from simPRO by Part Number
+                const g2 = simproIndex.get(e.supplier_part);
+                if (g2) {
+                    if (H.group && g2.group) row[H.group] = g2.group;
+                    if (H.subgroup1 && g2.subgroup1) row[H.subgroup1] = g2.subgroup1;
+                    if (H.subgroup2 && g2.subgroup2) row[H.subgroup2] = g2.subgroup2;
+                    if (H.subgroup3 && g2.subgroup3) row[H.subgroup3] = g2.subgroup3;
+                }
+
+                output.push(row);
+            }
         }
 
         // Serialize to CSV with headers in exact order
         const csvRows: string[] = [];
         csvRows.push(hdrs.map((h) => escapeCsv(h)).join(","));
-
         for (const r of output) {
             csvRows.push(hdrs.map((h) => escapeCsv(r[h] ?? "")).join(","));
         }
-
         return csvRows.join("\n");
     }
 
@@ -331,7 +409,7 @@ export default function ExportPage() {
     }
 
     function downloadCsv() {
-        if (!rows.length) {
+        if (!rows.length && !(includeEOL && simproIndex.size)) {
             alert("No rows to export");
             return;
         }
@@ -354,11 +432,8 @@ export default function ExportPage() {
         <div className="mx-auto max-w-7xl p-6 space-y-6">
             <PageHeader
                 title="Export Catalogue"
-                description="Choose a supplier and brand(s), preview items, and export a catalogue CSV matching your template."
-                breadcrumbs={[
-                    { href: "/", label: "Home" },
-                    { label: "Export Catalogue" },
-                ]}
+                description="Choose a supplier and brand(s), upload a simPRO export to detect EOL items, copy Group/Subgroups, and export."
+                breadcrumbs={[{ href: "/", label: "Home" }, { label: "Export Catalogue" }]}
             />
 
             <Card>
@@ -374,9 +449,7 @@ export default function ExportPage() {
                             >
                                 <option value="">— Select supplier —</option>
                                 {suppliers.map((s) => (
-                                    <option key={s.supplier_id} value={s.supplier_id}>
-                                        {s.name}
-                                    </option>
+                                    <option key={s.supplier_id} value={s.supplier_id}>{s.name}</option>
                                 ))}
                             </select>
                         </div>
@@ -419,16 +492,56 @@ export default function ExportPage() {
                             <Button disabled={!supplierId || loading} onClick={fetchData}>
                                 {loading ? "Loading…" : "Load"}
                             </Button>
-                            <Button variant="outline" disabled={!rows.length} onClick={downloadCsv}>
+                            <Button
+                                variant="outline"
+                                disabled={!rows.length && !(includeEOL && simproIndex.size)}
+                                onClick={downloadCsv}
+                            >
                                 Export CSV
                             </Button>
                         </div>
                     </div>
 
+                    {/* simPRO file upload & EOL controls */}
+                    <div className="space-y-2">
+                        <Label htmlFor="simpro">Current simPRO export (CSV)</Label>
+                        <Input id="simpro" type="file" accept=".csv,text/csv" onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            setSimproFileName(f.name);
+                            Papa.parse<Record<string, any>>(f, {
+                                header: true,
+                                dynamicTyping: false,
+                                skipEmptyLines: true,
+                                complete: (res) => {
+                                    const parsedRows = (res.data as any[]).filter(r => r && Object.keys(r).length);
+                                    const hdrs = (res.meta as any)?.fields ?? Object.keys(parsedRows[0] ?? {});
+                                    setSimproHeaders(hdrs);
+                                    setSimproRows(parsedRows);
+                                },
+                                error: (err) => alert(`Failed to parse simPRO CSV: ${err.message}`)
+                            });
+                        }} />
+                        {simproFileName && (
+                            <p className="text-sm text-muted-foreground">
+                                Loaded: {simproFileName} · {simproRows.length.toLocaleString()} rows
+                            </p>
+                        )}
+                        <div className="flex items-center gap-3">
+                            <label className="flex items-center gap-2 text-sm">
+                                <input type="checkbox" checked={includeEOL} onChange={(e) => setIncludeEOL(e.target.checked)} />
+                                Include EOL items (present in simPRO but missing in new export)
+                            </label>
+                            <span className="text-xs text-muted-foreground">
+                EOL to add: {Array.from(simproIndex.keys()).filter(k => !new Set(rows.map(r => r.supplier_sku ?? "")).has(k)).length.toLocaleString()}
+              </span>
+                        </div>
+                    </div>
+
                     {/* Template status */}
                     <p className="text-xs text-muted-foreground">
-                        Template headers: {templateHeaders ? `${templateHeaders.length} found` : "loading…"}. Place your file as
-                        <code className="mx-1">/public/Catalogue-Import-Template-AU.csv</code> to use the exact header order.
+                        Template detected: {templateHeaders ? `${templateHeaders.length} headers` : "loading…"}.
+                        Populating: Group, Subgroup 1–3, Part Number, Description, Trade Price, Cost Price, Split Cost Price, Manufacturer.
                     </p>
 
                     {/* Preview Table */}
@@ -439,7 +552,7 @@ export default function ExportPage() {
                                     <TableRow>
                                         <TableHead>Brand</TableHead>
                                         <TableHead>MPN</TableHead>
-                                        <TableHead>Supplier SKU</TableHead>
+                                        <TableHead>Supplier SKU (Part Number)</TableHead>
                                         <TableHead>Description</TableHead>
                                         <TableHead className="text-right">Price ex GST</TableHead>
                                     </TableRow>
@@ -450,7 +563,9 @@ export default function ExportPage() {
                                             <TableCell className="whitespace-nowrap">{r.brand}</TableCell>
                                             <TableCell className="whitespace-nowrap">{r.mpn}</TableCell>
                                             <TableCell className="whitespace-nowrap">{r.supplier_sku}</TableCell>
-                                            <TableCell className="whitespace-nowrap max-w-[500px] truncate">{r.supplier_description}</TableCell>
+                                            <TableCell className="whitespace-nowrap max-w-[500px] truncate">
+                                                {[r.brand, r.mpn, r.supplier_description].filter(Boolean).join(" • ")}
+                                            </TableCell>
                                             <TableCell className="text-right">{r.price_ex_gst ?? 0}</TableCell>
                                         </TableRow>
                                     ))}
