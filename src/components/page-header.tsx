@@ -1,58 +1,24 @@
-"use client";
-
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-
-type Crumb = { href?: string; label: string };
+import { ReactNode } from "react";
+import { Button } from "@/components/ui/button";
 
 export function PageHeader({
                                title,
-                               description,
-                               actions,
-                               breadcrumbs,
+                               subtitle,
+                               cta,
                            }: {
     title: string;
-    description?: string;
-    actions?: React.ReactNode;
-    /** Optional: override the auto breadcrumb builder */
-    breadcrumbs?: Crumb[];
+    subtitle?: string;
+    cta?: ReactNode;
 }) {
-    const pathname = usePathname();
-
-    // Fallback: auto build (Home / ...segments)
-    const segments = pathname.split("/").filter(Boolean);
-    const auto: Crumb[] = [
-        { href: "/", label: "Home" },
-        ...segments.map((seg, i) => ({
-            href: "/" + segments.slice(0, i + 1).join("/"),
-            label: seg.replace(/-/g, " "),
-        })),
-    ];
-
-    const crumbs = breadcrumbs ?? auto;
-
     return (
-        <div className="space-y-2">
-            <nav className="text-sm text-muted-foreground">
-                {crumbs.map((c, i) => (
-                    <span key={`${c.label}-${i}`}>
-            {c.href ? (
-                <Link href={c.href} className="hover:underline">{c.label}</Link>
-            ) : (
-                <span>{c.label}</span>
-            )}
-                        {i < crumbs.length - 1 ? " / " : ""}
-          </span>
-                ))}
-            </nav>
-
-            <div className="flex items-center justify-between gap-3">
-                <div>
-                    <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-                    {description && <p className="text-sm text-muted-foreground">{description}</p>}
-                </div>
-                {actions}
+        <div className="mb-4 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+                <h1 className="text-2xl font-semibold">{title}</h1>
+                {subtitle ? (
+                    <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
+                ) : null}
             </div>
+            {cta ? <div className="flex gap-2">{cta}</div> : null}
         </div>
     );
 }

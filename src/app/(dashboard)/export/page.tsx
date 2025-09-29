@@ -41,6 +41,10 @@ type PriceRow = {
 };
 
 // ---------- Helpers ----------
+function normKey(x: string | null | undefined) {
+    return String(x ?? "").trim().replace(/\s+/g, "").toUpperCase();
+}
+
 async function selectPaged<T>(
     build: (from: number, to: number) => ReturnType<typeof supabase.from<any>["select"]>,
     pageSize = 1000
@@ -154,9 +158,10 @@ export default function ExportPage() {
         const mpnH = pickHeader(simproHeaders, ["Universal Product Code", "UPC", "MPN"]);
 
         for (const r of simproRows) {
-            const sku = String(r[spnH] ?? "").trim();
-            if (!sku) continue;
-            map.set(sku, {
+            const skuRaw = String(r[spnH] ?? "");
+            const key = normKey(skuRaw);
+            if (!key) continue;
+            map.set(key, {
                 group: gH ? String(r[gH] ?? "") : "",
                 subgroup1: s1H ? String(r[s1H] ?? "") : "",
                 subgroup2: s2H ? String(r[s2H] ?? "") : "",
@@ -165,6 +170,7 @@ export default function ExportPage() {
                 mpn: mpnH ? String(r[mpnH] ?? "") : "",
             });
         }
+
         return map;
     }, [simproRows, simproHeaders]);
 
@@ -173,7 +179,14 @@ export default function ExportPage() {
         if (!simproRows.length || !simproHeaders) return [] as Array<{
             supplier_part: string; manufacturer: string; mpn: string;
         }>;
-        const skuSet = new Set((rows || []).map(r => (r.supplier_sku ?? "").trim()).filter(Boolean));
+
+        // Build a set of our “new export” keys using MPN first, then supplier_sku.
+        const newKeySet = new Set(
+            (rows || [])
+                .map(r => normKey(r.mpn || r.supplier_sku))
+                .filter(Boolean)
+        );
+
         const spnH = pickHeader(simproHeaders, ["Supplier Part Number", "Part Number"]);
         const manH = pickHeader(simproHeaders, "Manufacturer");
         const mpnH = pickHeader(simproHeaders, ["Universal Product Code", "UPC", "MPN"]);
@@ -181,13 +194,17 @@ export default function ExportPage() {
 
         const out: Array<{ supplier_part: string; manufacturer: string; mpn: string; }> = [];
         for (const r of simproRows) {
-            const sku = String(r[spnH] ?? "").trim();
-            if (!sku || skuSet.has(sku)) continue;
-            out.push({
-                supplier_part: sku,
-                manufacturer: manH ? String(r[manH] ?? "") : "",
-                mpn: mpnH ? String(r[mpnH] ?? "") : "",
-            });
+            const partRaw = String(r[spnH] ?? "");
+            const simproKey = normKey(partRaw);
+            if (!simproKey) continue;
+            // If simPRO Part Number is NOT found in our new export’s MPN/SKU set -> EOL.
+            if (!newKeySet.has(simproKey)) {
+                out.push({
+                    supplier_part: partRaw.trim(),
+                    manufacturer: manH ? String(r[manH] ?? "") : "",
+                    mpn: mpnH ? String(r[mpnH] ?? "") : "",
+                });
+            }
         }
         return out;
     }, [simproRows, simproHeaders, rows]);
@@ -345,8 +362,9 @@ export default function ExportPage() {
             if (H.manufacturer) row[H.manufacturer] = r.brand ?? "";
 
             // Copy Group/Subgroups from simPRO by Part Number (supplier_sku)
-            const sku = String(r.supplier_sku ?? "");
-            const g = simproIndex.get(sku);
+            const lookupKey = normKey(r.mpn || r.supplier_sku);
+            const g = simproIndex.get(lookupKey);
+
             if (g) {
                 if (H.group && g.group) row[H.group] = g.group;
                 if (H.subgroup1 && g.subgroup1) row[H.subgroup1] = g.subgroup1;
@@ -380,7 +398,8 @@ export default function ExportPage() {
                 if (H.manufacturer) row[H.manufacturer] = e.manufacturer ?? "";
 
                 // Copy Group/Subgroups for EOL from simPRO by Part Number
-                const g2 = simproIndex.get(e.supplier_part);
+                const g2 = simproIndex.get(normKey(e.supplier_part));
+
                 if (g2) {
                     if (H.group && g2.group) row[H.group] = g2.group;
                     if (H.subgroup1 && g2.subgroup1) row[H.subgroup1] = g2.subgroup1;
@@ -432,7 +451,7 @@ export default function ExportPage() {
         <div className="mx-auto max-w-7xl p-6 space-y-6">
             <PageHeader
                 title="Export Catalogue"
-                description="Choose a supplier and brand(s), upload a simPRO export to detect EOL items, copy Group/Subgroups, and export."
+                subtitle="Choose a supplier and brand(s), upload a simPRO export to detect EOL items, copy Group/Subgroups, and export."
                 breadcrumbs={[{ href: "/", label: "Home" }, { label: "Export Catalogue" }]}
             />
 
