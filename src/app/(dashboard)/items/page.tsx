@@ -35,10 +35,10 @@ function normalizeKey(x: string) {
     if (x == null) return "";
     let s = String(x).trim();
     if (!s) return "";
-    s = s.replace(/&/g, ",");          // & -> ,
-    s = s.replace(/\s*,\s*/g, ",");    // spaces around commas -> single comma
-    s = s.replace(/\s+/g, "-");        // whitespace -> -
-    s = s.replace(/-+/g, "-");         // collapse ---
+    s = s.replace(/&/g, ","); // & -> ,
+    s = s.replace(/\s*,\s*/g, ","); // spaces around commas -> single comma
+    s = s.replace(/\s+/g, "-"); // whitespace -> -
+    s = s.replace(/-+/g, "-"); // collapse ---
     s = s.replace(/^[-,]+|[-,]+$/g, ""); // trim leading/trailing - or ,
     return s;
 }
@@ -123,7 +123,6 @@ export default function ItemsPage() {
         }
 
         if (searchDeb) {
-            // true MPN search: normalize and search mpn against normalized pattern
             const norm = normalizeKey(searchDeb);
             query = query.ilike("mpn", `%${norm}%`);
         }
@@ -170,14 +169,13 @@ export default function ItemsPage() {
     const totalPages = Math.max(1, Math.ceil((total ?? 0) / PAGE_SIZE));
 
     return (
-        <div className="mx-auto max-w-7xl p-6 space-y-6">
-            <PageHeader
-                title="Items"
-                description="Search by supplier, brand, or MPN."
-                breadcrumbs={[{ href: "/", label: "Home" }, { label: "Items" }]}
-            />
+        // ❗ Full-width: no max-w container
+        <div className="p-4 md:p-6 lg:p-8 space-y-4">
+            {/* ❌ Removed breadcrumbs prop */}
+            <PageHeader title="Items" subtitle="Search by supplier, brand, or MPN." />
+
             <Card>
-                <CardContent className="p-6 space-y-4">
+                <CardContent className="p-5 space-y-4">
                     {/* Filters */}
                     <div className="grid gap-3 md:grid-cols-4">
                         <div className="space-y-1">
@@ -186,7 +184,7 @@ export default function ItemsPage() {
                                 <SelectTrigger className="w-full">
                                     <SelectValue placeholder="All suppliers" />
                                 </SelectTrigger>
-                                <SelectContent>
+                                <SelectContent className="bg-white text-foreground border shadow-md">
                                     <SelectItem value={ALL}>All suppliers</SelectItem>
                                     {suppliers.map((s) => (
                                         <SelectItem key={s.supplier_id} value={String(s.supplier_id)}>
@@ -203,7 +201,7 @@ export default function ItemsPage() {
                                 <SelectTrigger className="w-full">
                                     <SelectValue placeholder="All brands" />
                                 </SelectTrigger>
-                                <SelectContent>
+                                <SelectContent className="bg-white text-foreground border shadow-md">
                                     <SelectItem value={ALL}>All brands</SelectItem>
                                     {brands.map((b) => (
                                         <SelectItem key={b.brand_id} value={String(b.brand_id)}>
@@ -222,64 +220,65 @@ export default function ItemsPage() {
                                 onChange={(e) => setSearch(e.target.value)}
                             />
                             <p className="text-xs text-muted-foreground">
-                                We normalize your input (spaces → “-”, “&” → “,”) to match stored MPNs.
+                                We normalise your input (spaces → “-”, “&” → “,”) to match stored MPNs.
                             </p>
                         </div>
                     </div>
 
                     {/* Table */}
-                    <div className="rounded-md border overflow-x-auto">
-                        <Table>
-                            <TableHeader>
-                                <TableRow>
-                                    <TableHead>Supplier</TableHead>
-                                    <TableHead>Brand</TableHead>
-                                    <TableHead>MPN</TableHead>
-                                    <TableHead>Supplier SKU</TableHead>
-                                    <TableHead>Description</TableHead>
-                                    <TableHead className="text-right">Price ex GST</TableHead>
-                                    <TableHead>UOM</TableHead>
-                                    <TableHead>Pack</TableHead>
-                                    <TableHead>Effective From</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {!loading && rows.length === 0 && (
-                                    <TableRow>
-                                        <TableCell colSpan={9} className="text-center text-sm text-muted-foreground">
-                                            No items found.
-                                        </TableCell>
+                    <div className="rounded-xl border bg-card overflow-hidden">
+                        <div className="overflow-x-auto">
+                            <Table className="w-full min-w-[1200px] text-[15px] md:text-base">
+                                <TableHeader>
+                                    <TableRow className="h-12">
+                                        <TableHead className="px-4">Supplier</TableHead>
+                                        <TableHead className="px-4">Brand</TableHead>
+                                        <TableHead className="px-4">MPN</TableHead>
+                                        <TableHead className="px-4">Supplier SKU</TableHead>
+                                        <TableHead className="px-4">Description</TableHead>
+                                        <TableHead className="px-4 text-right">Price ex GST</TableHead>
+                                        <TableHead className="px-4">UOM</TableHead>
+                                        <TableHead className="px-4">Pack</TableHead>
+                                        <TableHead className="px-4">Effective From</TableHead>
                                     </TableRow>
-                                )}
+                                </TableHeader>
 
-                                {!loading &&
-                                    rows.map((r) => (
-                                        <TableRow key={r.supplier_product_id}>
-                                            <TableCell className="whitespace-nowrap">{r.supplier_name}</TableCell>
-                                            <TableCell className="whitespace-nowrap">{r.brand_name ?? "—"}</TableCell>
-                                            <TableCell className="whitespace-nowrap">{r.mpn ?? "—"}</TableCell>
-                                            <TableCell className="whitespace-nowrap">{r.supplier_sku ?? "—"}</TableCell>
-                                            <TableCell className="max-w-[480px] truncate">
-                                                {r.supplier_description || "—"}
+                                <TableBody className="[&>tr]:h-12 [&>tr>td]:py-3 [&>tr>td]:px-4 [&>tr>td]:whitespace-nowrap">
+                                    {!loading && rows.length === 0 && (
+                                        <TableRow>
+                                            <TableCell colSpan={9} className="text-center text-sm text-muted-foreground">
+                                                No items found.
                                             </TableCell>
-                                            <TableCell className="text-right whitespace-nowrap">
-                                                {r.latest_price_ex_gst != null ? r.latest_price_ex_gst.toFixed(2) : "—"}
-                                            </TableCell>
-                                            <TableCell className="whitespace-nowrap">{r.uom}</TableCell>
-                                            <TableCell className="whitespace-nowrap">{r.pack_size}</TableCell>
-                                            <TableCell className="whitespace-nowrap">{r.latest_start_date ?? "—"}</TableCell>
                                         </TableRow>
-                                    ))}
+                                    )}
 
-                                {loading && (
-                                    <TableRow>
-                                        <TableCell colSpan={9} className="text-center text-sm text-muted-foreground">
-                                            Loading…
-                                        </TableCell>
-                                    </TableRow>
-                                )}
-                            </TableBody>
-                        </Table>
+                                    {!loading &&
+                                        rows.map((r) => (
+                                            <TableRow key={r.supplier_product_id}>
+                                                <TableCell>{r.supplier_name}</TableCell>
+                                                <TableCell>{r.brand_name ?? "—"}</TableCell>
+                                                <TableCell>{r.mpn ?? "—"}</TableCell>
+                                                <TableCell>{r.supplier_sku ?? "—"}</TableCell>
+                                                <TableCell className="max-w-[700px] truncate">{r.supplier_description || "—"}</TableCell>
+                                                <TableCell className="text-right">
+                                                    {r.latest_price_ex_gst != null ? r.latest_price_ex_gst.toFixed(2) : "—"}
+                                                </TableCell>
+                                                <TableCell>{r.uom}</TableCell>
+                                                <TableCell>{r.pack_size}</TableCell>
+                                                <TableCell>{r.latest_start_date ?? "—"}</TableCell>
+                                            </TableRow>
+                                        ))}
+
+                                    {loading && (
+                                        <TableRow>
+                                            <TableCell colSpan={9} className="text-center text-sm text-muted-foreground">
+                                                Loading…
+                                            </TableCell>
+                                        </TableRow>
+                                    )}
+                                </TableBody>
+                            </Table>
+                        </div>
                     </div>
 
                     {/* Pagination */}
@@ -298,12 +297,14 @@ export default function ItemsPage() {
                             >
                                 Previous
                             </Button>
-                            <div className="px-2 text-sm">Page {page} / {totalPages}</div>
+                            <div className="px-2 text-sm">
+                                Page {page} / {Math.max(1, Math.ceil((total ?? 0) / PAGE_SIZE))}
+                            </div>
                             <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                                disabled={page >= totalPages || loading}
+                                onClick={() => setPage((p) => Math.min(Math.max(1, Math.ceil((total ?? 0) / PAGE_SIZE)), p + 1))}
+                                disabled={page >= Math.max(1, Math.ceil((total ?? 0) / PAGE_SIZE)) || loading}
                             >
                                 Next
                             </Button>

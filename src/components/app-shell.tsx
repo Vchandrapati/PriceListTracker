@@ -15,17 +15,11 @@ import {
 type NavItem = { title: string; href: string; icon?: React.ComponentType<any> };
 
 const commerce: NavItem[] = [
-    { title: "Dashboard", href: "/", icon: LayoutGrid },
-    { title: "Price Lists", href: "/prices", icon: ListChecks },
-    { title: "Suppliers", href: "/suppliers", icon: Package },
-    { title: "Imports", href: "/imports", icon: Upload },
+    { title: "Items", href: "/items", icon: ListChecks },
+    { title: "New Upload", href: "/uploads/new", icon: Upload },
+    { title: "Export", href: "/export", icon: Package },
 ];
-const fleet: NavItem[] = [
-    { title: "Vehicles", href: "/vehicles", icon: Truck },
-    { title: "Fleet Map", href: "/map", icon: Map },
-    { title: "Fuel & Logs", href: "/fuel", icon: Fuel },
-    { title: "Maintenance", href: "/maintenance", icon: Wrench },
-];
+
 const admin: NavItem[] = [{ title: "Admin", href: "/admin", icon: Settings }];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -59,14 +53,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </header>
 
             {/* Full-bleed two-column layout; sidebar pinned to left */}
-            <div className="grid grid-cols-1 md:grid-cols-[260px_1fr]">
-                {/* Desktop sidebar on true left edge */}
+            <div className="grid grid-cols-1 md:grid-cols-[260px_minmax(0,1fr)]">
                 <aside className="hidden h-[calc(100dvh-57px)] border-r md:sticky md:top-[57px] md:block">
                     <DesktopNav />
                 </aside>
 
                 {/* Main content area */}
-                <main className="p-4 md:p-6">{children}</main>
+                <main className="p-4 md:p-6 lg:p-8 max-w-none">{children}</main>
             </div>
         </div>
     );
@@ -100,17 +93,10 @@ function Section({ label, items }: { label: string; items: NavItem[] }) {
 function DesktopNav() {
     return (
         <div className="flex h-full flex-col">
-            <div className="p-3">
-                <div className="rounded-xl brand-gradient p-4 border border-border">
-                    <p className="text-xs text-muted-foreground">Internal Tools</p>
-                    <h2 className="mt-1 text-base font-semibold">Price &amp; Fleet</h2>
-                </div>
-            </div>
             <Separator />
             <ScrollArea className="flex-1">
                 <div className="py-2 space-y-2">
                     <Section label="Commercial" items={commerce} />
-                    <Section label="Fleet" items={fleet} />
                     <Section label="Settings" items={admin} />
                 </div>
             </ScrollArea>
@@ -123,7 +109,6 @@ function DesktopNav() {
 function MobileNav({ onNavigate }: { onNavigate: () => void }) {
     const groups = [
         { label: "Commercial", items: commerce },
-        { label: "Fleet", items: fleet },
         { label: "Settings", items: admin },
     ];
     return (

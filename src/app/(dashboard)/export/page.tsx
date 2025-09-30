@@ -180,7 +180,6 @@ export default function ExportPage() {
             supplier_part: string; manufacturer: string; mpn: string;
         }>;
 
-        // Build a set of our “new export” keys using MPN first, then supplier_sku.
         const newKeySet = new Set(
             (rows || [])
                 .map(r => normKey(r.mpn || r.supplier_sku))
@@ -197,7 +196,6 @@ export default function ExportPage() {
             const partRaw = String(r[spnH] ?? "");
             const simproKey = normKey(partRaw);
             if (!simproKey) continue;
-            // If simPRO Part Number is NOT found in our new export’s MPN/SKU set -> EOL.
             if (!newKeySet.has(simproKey)) {
                 out.push({
                     supplier_part: partRaw.trim(),
@@ -448,21 +446,22 @@ export default function ExportPage() {
 
     // ---------------- UI ----------------
     return (
-        <div className="mx-auto max-w-7xl p-6 space-y-6">
+        /* Full-width like Items page (no max-w) */
+        <div className="p-4 md:p-6 lg:p-8 space-y-4">
+            {/* Removed breadcrumbs prop */}
             <PageHeader
                 title="Export Catalogue"
                 subtitle="Choose a supplier and brand(s), upload a simPRO export to detect EOL items, copy Group/Subgroups, and export."
-                breadcrumbs={[{ href: "/", label: "Home" }, { label: "Export Catalogue" }]}
             />
 
             <Card>
-                <CardContent className="p-6 space-y-6">
-                    {/* Supplier */}
+                <CardContent className="p-5 space-y-6">
+                    {/* Supplier & Brands */}
                     <div className="grid gap-3 md:grid-cols-3 items-end">
                         <div className="space-y-1">
                             <Label>Supplier</Label>
                             <select
-                                className="w-full border rounded h-10 px-3"
+                                className="w-full h-10 rounded border px-3"
                                 value={supplierId ?? ""}
                                 onChange={(e) => setSupplierId(e.target.value ? Number(e.target.value) : null)}
                             >
@@ -482,7 +481,7 @@ export default function ExportPage() {
                                         {selectedBrands.length ? `${selectedBrands.length} selected` : "All brands"}
                                     </Button>
                                 </PopoverTrigger>
-                                <PopoverContent className="p-0 w-80" align="start">
+                                <PopoverContent className="bg-white text-foreground border" align="start">
                                     <Command>
                                         <CommandInput placeholder="Filter brands..." />
                                         <CommandGroup>
@@ -524,23 +523,28 @@ export default function ExportPage() {
                     {/* simPRO file upload & EOL controls */}
                     <div className="space-y-2">
                         <Label htmlFor="simpro">Current simPRO export (CSV)</Label>
-                        <Input id="simpro" type="file" accept=".csv,text/csv" onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            if (!f) return;
-                            setSimproFileName(f.name);
-                            Papa.parse<Record<string, any>>(f, {
-                                header: true,
-                                dynamicTyping: false,
-                                skipEmptyLines: true,
-                                complete: (res) => {
-                                    const parsedRows = (res.data as any[]).filter(r => r && Object.keys(r).length);
-                                    const hdrs = (res.meta as any)?.fields ?? Object.keys(parsedRows[0] ?? {});
-                                    setSimproHeaders(hdrs);
-                                    setSimproRows(parsedRows);
-                                },
-                                error: (err) => alert(`Failed to parse simPRO CSV: ${err.message}`)
-                            });
-                        }} />
+                        <Input
+                            id="simpro"
+                            type="file"
+                            accept=".csv,text/csv"
+                            onChange={(e) => {
+                                const f = e.target.files?.[0];
+                                if (!f) return;
+                                setSimproFileName(f.name);
+                                Papa.parse<Record<string, any>>(f, {
+                                    header: true,
+                                    dynamicTyping: false,
+                                    skipEmptyLines: true,
+                                    complete: (res) => {
+                                        const parsedRows = (res.data as any[]).filter(r => r && Object.keys(r).length);
+                                        const hdrs = (res.meta as any)?.fields ?? Object.keys(parsedRows[0] ?? {});
+                                        setSimproHeaders(hdrs);
+                                        setSimproRows(parsedRows);
+                                    },
+                                    error: (err) => alert(`Failed to parse simPRO CSV: ${err.message}`)
+                                });
+                            }}
+                        />
                         {simproFileName && (
                             <p className="text-sm text-muted-foreground">
                                 Loaded: {simproFileName} · {simproRows.length.toLocaleString()} rows
@@ -548,11 +552,32 @@ export default function ExportPage() {
                         )}
                         <div className="flex items-center gap-3">
                             <label className="flex items-center gap-2 text-sm">
-                                <input type="checkbox" checked={includeEOL} onChange={(e) => setIncludeEOL(e.target.checked)} />
+                                <input
+                                    type="checkbox"
+                                    checked={includeEOL}
+                                    onChange={(e) => setIncludeEOL(e.target.checked)}
+                                />
                                 Include EOL items (present in simPRO but missing in new export)
                             </label>
                             <span className="text-xs text-muted-foreground">
-                EOL to add: {Array.from(simproIndex.keys()).filter(k => !new Set(rows.map(r => r.supplier_sku ?? "")).has(k)).length.toLocaleString()}
+                EOL to add: {
+                                React.useMemo(() => {
+                                    if (!simproRows.length || !simproHeaders) return 0;
+                                    const newKeys = new Set(
+                                        (rows || [])
+                                            .map(r => normKey(r.mpn || r.supplier_sku))
+                                            .filter(Boolean)
+                                    );
+                                    const spnH = pickHeader(simproHeaders, ["Supplier Part Number", "Part Number"]);
+                                    if (!spnH) return 0;
+                                    let count = 0;
+                                    for (const r of simproRows) {
+                                        const key = normKey(String(r[spnH] ?? ""));
+                                        if (key && !newKeys.has(key)) count++;
+                                    }
+                                    return count;
+                                }, [simproRows, simproHeaders, rows]).toLocaleString()
+                            }
               </span>
                         </div>
                     </div>
@@ -563,33 +588,37 @@ export default function ExportPage() {
                         Populating: Group, Subgroup 1–3, Part Number, Description, Trade Price, Cost Price, Split Cost Price, Manufacturer.
                     </p>
 
-                    {/* Preview Table */}
+                    {/* Preview Table (full-width, larger) */}
                     {rows.length > 0 && (
-                        <div className="rounded-md border overflow-x-auto">
-                            <Table>
-                                <TableHeader>
-                                    <TableRow>
-                                        <TableHead>Brand</TableHead>
-                                        <TableHead>MPN</TableHead>
-                                        <TableHead>Supplier SKU (Part Number)</TableHead>
-                                        <TableHead>Description</TableHead>
-                                        <TableHead className="text-right">Price ex GST</TableHead>
-                                    </TableRow>
-                                </TableHeader>
-                                <TableBody>
-                                    {rows.map((r) => (
-                                        <TableRow key={r.supplier_product_id}>
-                                            <TableCell className="whitespace-nowrap">{r.brand}</TableCell>
-                                            <TableCell className="whitespace-nowrap">{r.mpn}</TableCell>
-                                            <TableCell className="whitespace-nowrap">{r.supplier_sku}</TableCell>
-                                            <TableCell className="whitespace-nowrap max-w-[500px] truncate">
-                                                {[r.brand, r.mpn, r.supplier_description].filter(Boolean).join(" • ")}
-                                            </TableCell>
-                                            <TableCell className="text-right">{r.price_ex_gst ?? 0}</TableCell>
+                        <div className="rounded-xl border bg-card overflow-hidden">
+                            <div className="overflow-x-auto">
+                                <Table className="w-full min-w-[1100px] text-[15px] md:text-base">
+                                    <TableHeader>
+                                        <TableRow className="h-12">
+                                            <TableHead className="px-4">Brand</TableHead>
+                                            <TableHead className="px-4">MPN</TableHead>
+                                            <TableHead className="px-4">Supplier SKU (Part Number)</TableHead>
+                                            <TableHead className="px-4">Description</TableHead>
+                                            <TableHead className="px-4 text-right">Price ex GST</TableHead>
                                         </TableRow>
-                                    ))}
-                                </TableBody>
-                            </Table>
+                                    </TableHeader>
+                                    <TableBody className="[&>tr]:h-12 [&>tr>td]:py-3 [&>tr>td]:px-4 [&>tr>td]:whitespace-nowrap">
+                                        {rows.map((r) => (
+                                            <TableRow key={r.supplier_product_id}>
+                                                <TableCell>{r.brand}</TableCell>
+                                                <TableCell>{r.mpn}</TableCell>
+                                                <TableCell>{r.supplier_sku}</TableCell>
+                                                <TableCell className="max-w-[700px] truncate">
+                                                    {[r.brand, r.mpn, r.supplier_description].filter(Boolean).join(" • ")}
+                                                </TableCell>
+                                                <TableCell className="text-right">
+                                                    {r.price_ex_gst ?? 0}
+                                                </TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </div>
                         </div>
                     )}
                 </CardContent>

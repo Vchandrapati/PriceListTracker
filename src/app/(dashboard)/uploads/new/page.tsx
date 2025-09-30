@@ -189,7 +189,7 @@ export default function Page() {
             return {
                 key: isEmpty ? `__EMPTY__${idx}` : `H_${idx}`,
                 label: isEmpty ? `(Empty header #${idx + 1})` : value,
-                value, // real header value (may be empty string)
+                value,
             };
         });
     }, [headers]);
@@ -399,22 +399,20 @@ export default function Page() {
     };
 
     return (
-        <div className="mx-auto max-w-6xl p-6 space-y-6">
+        /* Full-width like Items (no max-w) */
+        <div className="p-4 md:p-6 lg:p-8 space-y-4">
+            {/* Removed breadcrumbs prop */}
             <PageHeader
                 title="New Upload"
-                description="Map columns and ingest your price list."
-                breadcrumbs={[
-                    { href: "/", label: "Home" },
-                    { label: "New Upload" },
-                ]}
+                subtitle="Map columns and ingest your price list."
             />
 
             <Card>
-                <CardContent className="p-6 space-y-6">
+                <CardContent className="p-5 space-y-6">
                     {/* Supplier picker + create */}
                     <div className="space-y-2">
                         <Label>Supplier</Label>
-                        <div className="flex flex-wrap gap-2 items-end">
+                        <div className="flex flex-wrap items-end gap-2">
                             <Select
                                 value={selectedSupplierId ? String(selectedSupplierId) : ""}
                                 onValueChange={(v) => setSelectedSupplierId(Number(v))}
@@ -423,7 +421,7 @@ export default function Page() {
                                 <SelectTrigger className="w-80">
                                     <SelectValue placeholder={suppliersLoading ? "Loading…" : "Select supplier"} />
                                 </SelectTrigger>
-                                <SelectContent>
+                                <SelectContent className="bg-white text-foreground border shadow-md">
                                     {suppliers.map((s) => (
                                         <SelectItem key={s.supplier_id} value={String(s.supplier_id)}>
                                             {s.name}
@@ -438,7 +436,7 @@ export default function Page() {
                         </div>
 
                         {showCreate && (
-                            <div className="mt-3 grid gap-2 md:grid-cols-[1fr_auto] items-end">
+                            <div className="mt-3 grid items-end gap-2 md:grid-cols-[1fr_auto]">
                                 <div className="space-y-2">
                                     <Label htmlFor="supplier_name">New supplier name</Label>
                                     <Input
@@ -485,7 +483,7 @@ export default function Page() {
                     {headers.length > 0 && (
                         <div className="space-y-3">
                             <Label>Map canonical fields to CSV headers</Label>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                                 {CANONICAL_FIELDS.map((c) => (
                                     <div key={c.value} className="flex items-center gap-3">
                     <span className="min-w-0 grow truncate text-sm">
@@ -527,14 +525,14 @@ export default function Page() {
                         </div>
                     )}
 
-                    {/* CSV preview table */}
+                    {/* CSV preview table (full-width, larger) */}
                     {headers.length > 0 && rowsPreview.length > 0 && (
                         <div className="space-y-3">
                             <div className="flex items-center justify-between">
                                 <Label>
                                     CSV Preview (first {rowsPreview.length} of {totalParsed.toLocaleString()} rows)
                                 </Label>
-                                <div className="flex gap-2 items-center">
+                                <div className="flex items-center gap-2">
                                     <Label htmlFor="limit" className="text-xs text-muted-foreground">
                                         Rows to preview
                                     </Label>
@@ -544,7 +542,7 @@ export default function Page() {
                                         value={previewLimit}
                                         min={10}
                                         max={5000}
-                                        className="w-24 h-8"
+                                        className="h-8 w-24"
                                         onChange={(e) => {
                                             const v = Math.max(10, Math.min(5000, Number(e.target.value || 100)));
                                             setPreviewLimit(v);
@@ -556,36 +554,39 @@ export default function Page() {
                                     />
                                 </div>
                             </div>
-                            <div className="rounded-md border overflow-x-auto">
-                                <Table>
-                                    <TableHeader>
-                                        <TableRow>
-                                            {headers.map((h, i) => (
-                                                <TableHead key={`th-${i}`} className="whitespace-nowrap">
-                                                    {String(h ?? "")}
-                                                </TableHead>
-                                            ))}
-                                        </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                        {rowsPreview.map((row, ridx) => (
-                                            <TableRow key={`r-${ridx}`}>
-                                                {headers.map((h, cidx) => (
-                                                    <TableCell key={`td-${ridx}-${cidx}`} className="whitespace-nowrap">
-                                                        {String((row as any)[h as any] ?? "")}
-                                                    </TableCell>
+
+                            <div className="rounded-xl border bg-card overflow-hidden">
+                                <div className="overflow-x-auto">
+                                    <Table className="w-full min-w-[1200px] text-[15px] md:text-base">
+                                        <TableHeader>
+                                            <TableRow className="h-12">
+                                                {headers.map((h, i) => (
+                                                    <TableHead key={`th-${i}`} className="px-4 whitespace-nowrap">
+                                                        {String(h ?? "")}
+                                                    </TableHead>
                                                 ))}
                                             </TableRow>
-                                        ))}
-                                    </TableBody>
-                                </Table>
+                                        </TableHeader>
+                                        <TableBody className="[&>tr]:h-12 [&>tr>td]:py-3 [&>tr>td]:px-4 [&>tr>td]:whitespace-nowrap">
+                                            {rowsPreview.map((row, ridx) => (
+                                                <TableRow key={`r-${ridx}`}>
+                                                    {headers.map((h, cidx) => (
+                                                        <TableCell key={`td-${ridx}-${cidx}`}>
+                                                            {String((row as any)[h as any] ?? "")}
+                                                        </TableCell>
+                                                    ))}
+                                                </TableRow>
+                                            ))}
+                                        </TableBody>
+                                    </Table>
+                                </div>
                             </div>
                         </div>
                     )}
 
                     {/* Live progress */}
                     {(submitting || totalRowsServer !== null) && (
-                        <div className="rounded-md border p-4 space-y-2">
+                        <div className="space-y-2 rounded-md border p-4">
                             <div className="flex items-center justify-between">
                                 <div className="text-sm font-medium">
                                     {totalBatches != null ? (
@@ -601,9 +602,9 @@ export default function Page() {
                                 </div>
                             </div>
 
-                            <div className="h-2 w-full bg-muted rounded">
+                            <div className="h-2 w-full rounded bg-muted">
                                 <div
-                                    className="h-2 bg-primary rounded transition-all"
+                                    className="h-2 rounded bg-primary transition-all"
                                     style={{
                                         width:
                                             totalBatches != null

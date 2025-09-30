@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
-/* ---------- Complete AV brand tokens ---------- */
+/* …existing vars… */
 :root {
-    /* Neutrals */
+    /* neutrals */
     --background: 0 0% 100%;
     --foreground: 222 47% 11%;
     --card: 0 0% 100%;
@@ -11,16 +11,20 @@
     --muted-foreground: 215 16% 46%;
     --border: 214 32% 91%;
     --input: 214 32% 91%;
-    --ring: 262 88% 50%; /* focus ring uses primary */
+    --ring: 262 88% 50%;
 
-    /* Brand (from your RGB values) */
-    --primary: 262 88% 50%;          /* rgb(97, 15, 238)  — “blue/purple” primary */
+    /* brand (yours)… */
+    --primary: 262 88% 50%;
     --primary-foreground: 0 0% 100%;
-
-    --accent: 95 73% 56%;            /* rgb(128, 225, 60) — lime accent */
+    --accent: 95 73% 56%;
     --accent-foreground: 0 0% 8%;
+    --brand-pink: 329 90% 49%;
 
-    --brand-pink: 329 90% 49%;       /* rgb(235, 13, 129) — secondary accent */
+    /* ✅ add these */
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --secondary: 210 16% 96%;
+    --secondary-foreground: 222 47% 11%;
 
     --radius: 14px;
 }
@@ -34,29 +38,11 @@
     --muted-foreground: 215 20% 72%;
     --border: 222 47% 16%;
     --input: 222 47% 16%;
-    --ring: 95 73% 56%; /* use lime ring in dark for pop */
-}
+    --ring: 95 73% 56%;
 
-/* Subtle brand utilities (v4 still supports @layer) */
-@layer components {
-    .btn-primary {
-        @apply inline-flex items-center justify-center rounded-lg px-3 py-2 text-sm font-medium;
-        background: hsl(var(--primary));
-        color: hsl(var(--primary-foreground));
-    }
-    .btn-primary:hover { filter: brightness(1.05); }
-    .link-brand { color: hsl(var(--primary)); }
-    .chip {
-        @apply rounded-full border px-3 py-1 text-xs;
-        border-color: hsl(var(--border));
-    }
-    .brand-gradient {
-        background-image: linear-gradient(
-                135deg,
-                hsl(var(--primary) / 0.10),
-                hsl(var(--brand-pink) / 0.10)
-        );
-    }
+    /* ✅ dark surfaces */
+    --popover: 222 47% 8%;
+    --popover-foreground: 210 40% 98%;
+    --secondary: 222 47% 12%;
+    --secondary-foreground: 210 40% 98%;
 }
-
-html, body { height: 100%; background: hsl(var(--background)); color: hsl(var(--foreground)); }
