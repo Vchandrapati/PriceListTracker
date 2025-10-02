@@ -500,7 +500,7 @@ export default function Page() {
                                             <SelectTrigger className="w-72">
                                                 <SelectValue placeholder="— Unmapped —" />
                                             </SelectTrigger>
-                                            <SelectContent>
+                                            <SelectContent className="bg-white text-foreground border">
                                                 <SelectItem value={UNMAPPED}>— Unmapped —</SelectItem>
                                                 {headerOpts.map((o) => (
                                                     <SelectItem key={o.key} value={o.key}>
