@@ -22,9 +22,9 @@ const commerce: NavItem[] = [
 
 /** ✅ New “Assets” section */
 const assets: NavItem[] = [
-    // These link to the Admin page with the correct tab preselected.
-    { title: "Vehicles", href: "/vehicles?tab=vehicles", icon: Truck },
-    { title: "Tools", href: "/vehicles?tab=tools", icon: Wrench },
+    { title: "Asset Dashboard", href: "/assets", icon: ListChecks },
+    { title: "Vehicles", href: "/assets/vehicles", icon: Truck },
+    { title: "Tools", href: "/assets/tools", icon: Wrench },
 ];
 
 const admin: NavItem[] = [{ title: "Admin", href: "/admin", icon: Settings }];
