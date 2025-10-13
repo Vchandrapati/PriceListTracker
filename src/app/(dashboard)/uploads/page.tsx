@@ -142,7 +142,7 @@ export default function Page() {
             if (!error && data) setSuppliers(data as Supplier[]);
             setSuppliersLoading(false);
         })();
-    }, []);
+    }, [supabase]); //
 
     const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const f = e.target.files?.[0];

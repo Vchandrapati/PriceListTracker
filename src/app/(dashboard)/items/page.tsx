@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {SupabaseClient} from "@supabase/supabase-js";
 
 type Supplier = { supplier_id: number; name: string };
 type Brand = { brand_id: number; name: string };
@@ -44,7 +45,10 @@ function normalizeKey(x: string) {
 }
 
 export default function ItemsPage() {
-    const supabase = React.useMemo(() => supabaseBrowser(), []);
+    const [sb, setSb] = React.useState<SupabaseClient | null>(null);
+    React.useEffect(() => {
+        setSb(supabaseBrowser());
+    }, []);
     const [suppliers, setSuppliers] = React.useState<Supplier[]>([]);
     const [brands, setBrands] = React.useState<Brand[]>([]);
     const [supplierId, setSupplierId] = React.useState<string>("");
@@ -59,15 +63,16 @@ export default function ItemsPage() {
 
     // load filter options
     React.useEffect(() => {
+        if (!sb) return;
         (async () => {
             const [{ data: sup }, { data: br }] = await Promise.all([
-                supabase.from("supplier").select("supplier_id,name").order("name"),
-                supabase.from("brand").select("brand_id,name").order("name"),
+                sb.from("supplier").select("supplier_id,name").order("name"),
+                sb.from("brand").select("brand_id,name").order("name"),
             ]);
             setSuppliers((sup ?? []) as Supplier[]);
             setBrands((br ?? []) as Brand[]);
         })();
-    }, []);
+    }, [sb]);
 
     // debounce search
     const [searchDeb, setSearchDeb] = React.useState(search);
@@ -84,15 +89,16 @@ export default function ItemsPage() {
     }, [supplierId, brandId, searchDeb]);
 
     const fetchItems = React.useCallback(async () => {
+        if (!sb) return;
+
         setLoading(true);
         setRows([]);
         setTotal(null);
 
-        // Build select WITHOUT catalog_product (it no longer exists)
         const selectCols = `
       supplier_product_id,
       supplier_id,
-      supplier:supplier_id(name),
+      supplier:supplier(name),
       brand,
       mpn,
       supplier_sku,
@@ -106,23 +112,17 @@ export default function ItemsPage() {
       )
     `;
 
-        let query = supabase
+        let query = sb
             .from("supplier_product")
             .select(selectCols, { count: "exact" })
             .order("start_date", { foreignTable: "price_history", ascending: false })
             .limit(1, { foreignTable: "price_history" });
 
-        // filters
         if (supplierId) query = query.eq("supplier_id", Number(supplierId));
-
         if (brandId) {
             const b = brands.find((x) => String(x.brand_id) === brandId);
-            if (b?.name) {
-                // brand is TEXT on supplier_product now
-                query = query.eq("brand", b.name);
-            }
+            if (b?.name) query = query.eq("brand", b.name);
         }
-
         if (searchDeb) {
             const norm = normalizeKey(searchDeb);
             query = query.ilike("mpn", `%${norm}%`);
@@ -141,18 +141,12 @@ export default function ItemsPage() {
             return;
         }
 
-        type PriceHistoryRow = {
-            price_id: number;
-            price_ex_gst: number | null;
-            start_date: string | null;
-        };
-
+        type PriceHistoryRow = { price_id: number; price_ex_gst: number | null; start_date: string | null; };
         type SupplierRel = { name: string } | { name: string }[] | null;
-
         type SupplierProductRowRaw = {
             supplier_product_id: number;
             supplier_id: number;
-            supplier: SupplierRel;   // from supplier:supplier_id(name)
+            supplier: SupplierRel;
             brand: string | null;
             mpn: string | null;
             supplier_sku: string | null;
@@ -164,11 +158,7 @@ export default function ItemsPage() {
 
         const shaped: ItemRow[] = ((data ?? []) as SupplierProductRowRaw[]).map((r) => {
             const ph = (r.price_history ?? [])[0] ?? null;
-
-            // supplier might be object or array
-            const supplierName =
-                Array.isArray(r.supplier) ? (r.supplier[0]?.name ?? "") : (r.supplier?.name ?? "");
-
+            const supplierName = Array.isArray(r.supplier) ? (r.supplier[0]?.name ?? "") : (r.supplier?.name ?? "");
             return {
                 supplier_product_id: r.supplier_product_id,
                 supplier_id: r.supplier_id,
@@ -184,11 +174,10 @@ export default function ItemsPage() {
             };
         });
 
-
         setRows(shaped);
         setTotal(count ?? 0);
         setLoading(false);
-    }, [supplierId, brandId, searchDeb, page, brands]);
+    }, [sb, supplierId, brandId, searchDeb, page, brands]);
 
     React.useEffect(() => {
         fetchItems();

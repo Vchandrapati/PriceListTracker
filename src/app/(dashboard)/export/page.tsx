@@ -213,6 +213,7 @@ export default function ExportPage() {
     }, [simproRows, simproHeaders, rows]);
 
     // ---------------- Effects ----------------
+    // load suppliers
     React.useEffect(() => {
         (async () => {
             const { data, error } = await supabase
@@ -220,9 +221,9 @@ export default function ExportPage() {
                 .select("supplier_id, name")
                 .eq("is_active", true)
                 .order("name");
-            if (!error && data) setSuppliers(data as unknown as Supplier[]);
+            if (!error && data) setSuppliers(data as Supplier[]);
         })();
-    }, []);
+    }, [supabase]); // ← add
 
     // fetch brands for supplier
     React.useEffect(() => {
@@ -236,11 +237,12 @@ export default function ExportPage() {
                     .eq("is_active", true)
                     .order("supplier_product_id", { ascending: true });
 
-            const brandRows = await selectPaged<{ brand: string | null }>(async (from, to) => {
-                const { data, error } = await makeBase().range(from, to);
-                return { data: (data as { brand: string | null }[] | null) ?? null, error };
-            });
-
+            const brandRows = await selectPaged<{ brand: string | null }>((from, to) =>
+                (async () => {
+                    const { data, error } = await makeBase().range(from, to);
+                    return { data: data ?? null, error };
+                })()
+            );
 
             const uniq = Array.from(new Set(brandRows.map((r) => (r.brand ?? "").trim())))
                 .filter(Boolean)
@@ -250,7 +252,7 @@ export default function ExportPage() {
             setSelectedBrands([]);
             setRows([]);
         })();
-    }, [supplierId]);
+    }, [supplierId, supabase]); // ← add
 
     // load CSV template headers from /public if present
     React.useEffect(() => {
