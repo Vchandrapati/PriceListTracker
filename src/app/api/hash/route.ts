@@ -24,8 +24,9 @@ export async function POST(req: NextRequest) {
 
         const hex = hash.digest("hex");
         return NextResponse.json({ hex });
-    } catch (e: any) {
-        return NextResponse.json({ error: e?.message ?? "hash failed" }, { status: 500 });
+    } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : "hash failed";
+        return NextResponse.json({ error: msg }, { status: 500 });
     }
 }
 

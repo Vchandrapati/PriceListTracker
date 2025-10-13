@@ -159,13 +159,12 @@ export default function Page() {
             skipEmptyLines: "greedy",
             worker: true,
             chunkSize: 1024 * 512,
-            chunk: (res) => {
+            chunk: (res: Papa.ParseResult<Row>) => {
                 if (!headers.length) {
                     const hdrs = res.meta.fields ?? Object.keys(res.data[0] ?? {});
                     setHeaders(hdrs);
                     // initialize mapping to "unmapped" for all canonicals
                     const init: MappingState = {};
-                    CANONICAL_FIELDS.forEach((c) => (init[c.value] = undefined as any));
                     setMapping(init);
                 }
                 for (const r of res.data) {
@@ -211,7 +210,11 @@ export default function Page() {
     // map canonical using UI key -> real header value
     const onMapCanonical = (canonical: Canonical, keyOrSentinel: string) => {
         setMapping((cur) => {
-            if (keyOrSentinel === UNMAPPED) return { ...cur, [canonical]: undefined as any };
+            if (keyOrSentinel === UNMAPPED) {
+                const next = { ...cur };
+                delete next[canonical];
+                return next;
+            }
             const actual = keyToValue.get(keyOrSentinel);
             return { ...cur, [canonical]: actual };
         });
@@ -356,7 +359,7 @@ export default function Page() {
                 let res;
                 try {
                     res = await callChunk(nextOffset);
-                } catch (err) {
+                } catch {
                     // retry once
                     await new Promise((r) => setTimeout(r, 800));
                     res = await callChunk(nextOffset);
@@ -390,9 +393,10 @@ export default function Page() {
             }
 
             alert(`Upload saved for supplier "${selectedSupplier?.name}". Ingest completed.`);
-        } catch (e: any) {
+        } catch (e: unknown) {
             console.error(e);
-            alert(e?.message ?? "Something went wrong");
+            const msg = e instanceof Error ? e.message : "Something went wrong";
+            alert(msg);
         } finally {
             setSubmitting(false);
         }
@@ -572,7 +576,7 @@ export default function Page() {
                                                 <TableRow key={`r-${ridx}`}>
                                                     {headers.map((h, cidx) => (
                                                         <TableCell key={`td-${ridx}-${cidx}`}>
-                                                            {String((row as any)[h as any] ?? "")}
+                                                            {String((row[h] ?? "") as unknown)}
                                                         </TableCell>
                                                     ))}
                                                 </TableRow>

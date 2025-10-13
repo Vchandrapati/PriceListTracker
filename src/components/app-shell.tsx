@@ -12,7 +12,9 @@ import {
     Menu, Settings, Truck, Wrench, ListChecks, Package, Upload,
 } from "lucide-react";
 
-type NavItem = { title: string; href: string; icon?: React.ComponentType<any> };
+import type { LucideIcon } from "lucide-react";
+
+type NavItem = { title: string; href: string; icon?: LucideIcon };
 
 const commerce: NavItem[] = [
     { title: "Items", href: "/items", icon: ListChecks },

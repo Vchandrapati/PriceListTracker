@@ -45,8 +45,11 @@ function normKey(x: string | null | undefined) {
     return String(x ?? "").trim().replace(/\s+/g, "").toUpperCase();
 }
 
+type PagedResponse<T> = { data: T[] | null; error: unknown };
+type BuildPage<T> = (from: number, to: number) => Promise<PagedResponse<T>>;
+
 async function selectPaged<T>(
-    build: (from: number, to: number) => ReturnType<typeof supabase.from<any>["select"]>,
+    build: BuildPage<T>,
     pageSize = 1000
 ): Promise<T[]> {
     const all: T[] = [];
@@ -54,8 +57,8 @@ async function selectPaged<T>(
     for (;;) {
         const to = from + pageSize - 1;
         const { data, error } = await build(from, to);
-        if (error) throw error;
-        const batch = (data as T[]) ?? [];
+        if (error) throw error as Error;
+        const batch = (data ?? []) as T[];
         all.push(...batch);
         if (batch.length < pageSize) break;
         from += pageSize;
@@ -135,7 +138,8 @@ export default function ExportPage() {
 
     // ----- simPRO cross-reference state -----
     const [simproHeaders, setSimproHeaders] = React.useState<string[] | null>(null);
-    const [simproRows, setSimproRows] = React.useState<Record<string, any>[]>([]);
+    type SimproRow = Record<string, string>; // dynamicTyping=false => strings
+    const [simproRows, setSimproRows] = React.useState<SimproRow[]>([]);
     const [simproFileName, setSimproFileName] = React.useState<string>("");
     const [includeEOL, setIncludeEOL] = React.useState(true);
 
@@ -215,7 +219,7 @@ export default function ExportPage() {
                 .select("supplier_id, name")
                 .eq("is_active", true)
                 .order("name");
-            if (!error && data) setSuppliers(data as Supplier[]);
+            if (!error && data) setSuppliers(data as unknown as Supplier[]);
         })();
     }, []);
 
@@ -231,9 +235,11 @@ export default function ExportPage() {
                     .eq("is_active", true)
                     .order("supplier_product_id", { ascending: true });
 
-            const brandRows = await selectPaged<{ brand: string | null }>((from, to) =>
-                makeBase().range(from, to)
-            );
+            const brandRows = await selectPaged<{ brand: string | null }>(async (from, to) => {
+                const { data, error } = await makeBase().range(from, to);
+                return { data: (data as { brand: string | null }[] | null) ?? null, error };
+            });
+
 
             const uniq = Array.from(new Set(brandRows.map((r) => (r.brand ?? "").trim())))
                 .filter(Boolean)
@@ -277,10 +283,13 @@ export default function ExportPage() {
                     .eq("is_active", true)
                     .order("supplier_product_id", { ascending: true });
 
-            const products = await selectPaged<SupplierProduct>((from, to) => {
+            const products = await selectPaged<SupplierProduct>(async (from, to) => {
                 let b = makeBase();
                 if (selectedBrands.length) b = b.in("brand", selectedBrands);
-                return b.range(from, to);
+
+                const { data, error } = await b.range(from, to);
+                // Match the BuildPage<T> return shape
+                return { data: (data as SupplierProduct[] | null) ?? null, error };
             });
 
             const prods = (products as SupplierProduct[]) ?? [];
@@ -307,8 +316,9 @@ export default function ExportPage() {
 
             const withPrice = prods.map((p) => ({ ...p, price_ex_gst: priceMap.get(p.supplier_product_id) ?? null }));
             setRows(withPrice);
-        } catch (e: any) {
-            alert(e?.message ?? "Failed to fetch data");
+        } catch (e: unknown) {
+            const msg = e instanceof Error ? e.message : "Failed to fetch data";
+            alert(msg);
         } finally {
             setLoading(false);
         }
@@ -531,13 +541,13 @@ export default function ExportPage() {
                                 const f = e.target.files?.[0];
                                 if (!f) return;
                                 setSimproFileName(f.name);
-                                Papa.parse<Record<string, any>>(f, {
+                                Papa.parse<SimproRow>(f, {
                                     header: true,
                                     dynamicTyping: false,
                                     skipEmptyLines: true,
                                     complete: (res) => {
-                                        const parsedRows = (res.data as any[]).filter(r => r && Object.keys(r).length);
-                                        const hdrs = (res.meta as any)?.fields ?? Object.keys(parsedRows[0] ?? {});
+                                        const parsedRows = res.data.filter(r => r && Object.keys(r).length);
+                                        const hdrs = res.meta.fields ?? Object.keys(parsedRows[0] ?? {});
                                         setSimproHeaders(hdrs);
                                         setSimproRows(parsedRows);
                                     },

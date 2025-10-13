@@ -140,12 +140,38 @@ export default function ItemsPage() {
             return;
         }
 
-        const shaped: ItemRow[] = (data ?? []).map((r: any) => {
+        type PriceHistoryRow = {
+            price_id: number;
+            price_ex_gst: number | null;
+            start_date: string | null;
+        };
+
+        type SupplierRel = { name: string } | { name: string }[] | null;
+
+        type SupplierProductRowRaw = {
+            supplier_product_id: number;
+            supplier_id: number;
+            supplier: SupplierRel;   // from supplier:supplier_id(name)
+            brand: string | null;
+            mpn: string | null;
+            supplier_sku: string | null;
+            supplier_description: string | null;
+            uom: string | null;
+            pack_size: number | null;
+            price_history: PriceHistoryRow[] | null;
+        };
+
+        const shaped: ItemRow[] = ((data ?? []) as SupplierProductRowRaw[]).map((r) => {
             const ph = (r.price_history ?? [])[0] ?? null;
+
+            // supplier might be object or array
+            const supplierName =
+                Array.isArray(r.supplier) ? (r.supplier[0]?.name ?? "") : (r.supplier?.name ?? "");
+
             return {
                 supplier_product_id: r.supplier_product_id,
                 supplier_id: r.supplier_id,
-                supplier_name: r.supplier?.name ?? "",
+                supplier_name: supplierName,
                 brand_name: r.brand ?? null,
                 mpn: r.mpn ?? null,
                 supplier_sku: r.supplier_sku ?? null,
@@ -156,6 +182,7 @@ export default function ItemsPage() {
                 latest_start_date: ph?.start_date ?? null,
             };
         });
+
 
         setRows(shaped);
         setTotal(count ?? 0);
@@ -298,13 +325,22 @@ export default function ItemsPage() {
                                 Previous
                             </Button>
                             <div className="px-2 text-sm">
-                                Page {page} / {Math.max(1, Math.ceil((total ?? 0) / PAGE_SIZE))}
+                                Page {page} / {totalPages}
                             </div>
                             <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => setPage((p) => Math.min(Math.max(1, Math.ceil((total ?? 0) / PAGE_SIZE)), p + 1))}
-                                disabled={page >= Math.max(1, Math.ceil((total ?? 0) / PAGE_SIZE)) || loading}
+                                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                                disabled={page <= 1 || loading}
+                            >
+                                Previous
+                            </Button>
+
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                                disabled={page >= totalPages || loading}
                             >
                                 Next
                             </Button>
