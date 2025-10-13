@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Papa from "papaparse";
-import { supabase } from "@/lib/supabase";
+import { supabaseBrowser } from "@/lib/supabase";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -88,6 +88,7 @@ async function sha256Hex(file: File): Promise<string> {
 }
 
 export default function Page() {
+    const supabase = React.useMemo(() => supabaseBrowser(), []);
     // suppliers
     const [suppliers, setSuppliers] = React.useState<Supplier[]>([]);
     const [suppliersLoading, setSuppliersLoading] = React.useState(false);

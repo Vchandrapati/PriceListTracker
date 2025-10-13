@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Papa from "papaparse";
-import { supabase } from "@/lib/supabase";
+import { supabaseBrowser } from "@/lib/supabase";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -124,6 +124,7 @@ function pickHeader(headers: string[], names: string | string[]) {
 
 export default function ExportPage() {
     // ---------------- State ----------------
+    const supabase = React.useMemo(() => supabaseBrowser(), []);
     const [suppliers, setSuppliers] = React.useState<Supplier[]>([]);
     const [supplierId, setSupplierId] = React.useState<number | null>(null);
 

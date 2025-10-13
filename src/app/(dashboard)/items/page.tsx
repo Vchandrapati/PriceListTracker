@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { supabase } from "@/lib/supabase";
+import { supabaseBrowser } from "@/lib/supabase";
 import { PageHeader } from "@/components/page-header";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -44,6 +44,7 @@ function normalizeKey(x: string) {
 }
 
 export default function ItemsPage() {
+    const supabase = React.useMemo(() => supabaseBrowser(), []);
     const [suppliers, setSuppliers] = React.useState<Supplier[]>([]);
     const [brands, setBrands] = React.useState<Brand[]>([]);
     const [supplierId, setSupplierId] = React.useState<string>("");
