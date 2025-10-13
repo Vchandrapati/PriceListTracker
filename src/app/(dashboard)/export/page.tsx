@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Papa from "papaparse";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseBrowser } from "@/lib/supabase";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,8 @@ import {
     Popover, PopoverTrigger, PopoverContent,
 } from "@/components/ui/popover";
 import { Command, CommandGroup, CommandItem, CommandInput } from "@/components/ui/command";
+
+export const dynamic = "force-dynamic"; // optional safety to avoid prerender
 
 // ---------- Types ----------
 type Supplier = { supplier_id: number; name: string };
@@ -124,7 +127,10 @@ function pickHeader(headers: string[], names: string | string[]) {
 
 export default function ExportPage() {
     // ---------------- State ----------------
-    const supabase = React.useMemo(() => supabaseBrowser(), []);
+    const [sb, setSb] = React.useState<SupabaseClient | null>(null);
+    React.useEffect(() => {
+        setSb(supabaseBrowser());
+    }, []);
     const [suppliers, setSuppliers] = React.useState<Supplier[]>([]);
     const [supplierId, setSupplierId] = React.useState<number | null>(null);
 
@@ -213,38 +219,35 @@ export default function ExportPage() {
     }, [simproRows, simproHeaders, rows]);
 
     // ---------------- Effects ----------------
-    // load suppliers
     React.useEffect(() => {
+        if (!sb) return;
         (async () => {
-            const { data, error } = await supabase
+            const { data, error } = await sb
                 .from("supplier")
                 .select("supplier_id, name")
                 .eq("is_active", true)
                 .order("name");
             if (!error && data) setSuppliers(data as Supplier[]);
         })();
-    }, [supabase]); // ← add
+    }, [sb]);
 
-    // fetch brands for supplier
+// fetch brands for supplier
     React.useEffect(() => {
-        if (!supplierId) return;
+        if (!sb || !supplierId) return;
         (async () => {
             const makeBase = () =>
-                supabase
-                    .from("supplier_product")
+                sb.from("supplier_product")
                     .select("brand")
                     .eq("supplier_id", supplierId)
                     .eq("is_active", true)
                     .order("supplier_product_id", { ascending: true });
 
-            const brandRows = await selectPaged<{ brand: string | null }>((from, to) =>
-                (async () => {
-                    const { data, error } = await makeBase().range(from, to);
-                    return { data: data ?? null, error };
-                })()
-            );
+            const brandRows = await selectPaged<{ brand: string | null }>(async (from, to) => {
+                const { data, error } = await makeBase().range(from, to);
+                return { data: data ?? null, error };
+            });
 
-            const uniq = Array.from(new Set(brandRows.map((r) => (r.brand ?? "").trim())))
+            const uniq = Array.from(new Set(brandRows.map(r => (r.brand ?? "").trim())))
                 .filter(Boolean)
                 .sort((a, b) => a.localeCompare(b));
 
@@ -252,7 +255,7 @@ export default function ExportPage() {
             setSelectedBrands([]);
             setRows([]);
         })();
-    }, [supplierId, supabase]); // ← add
+    }, [sb, supplierId]);
 
     // load CSV template headers from /public if present
     React.useEffect(() => {
@@ -273,15 +276,12 @@ export default function ExportPage() {
 
     // ---------------- Data fetch ----------------
     async function fetchData() {
-        if (!supplierId) return;
+        if (!sb || !supplierId) return;
         setLoading(true);
         try {
             const makeBase = () =>
-                supabase
-                    .from("supplier_product")
-                    .select(
-                        "supplier_product_id, supplier_id, supplier_sku, supplier_description, is_active, uom, pack_size, brand, mpn"
-                    )
+                sb.from("supplier_product")
+                    .select("supplier_product_id, supplier_id, supplier_sku, supplier_description, is_active, uom, pack_size, brand, mpn")
                     .eq("supplier_id", supplierId)
                     .eq("is_active", true)
                     .order("supplier_product_id", { ascending: true });
@@ -289,11 +289,10 @@ export default function ExportPage() {
             const products = await selectPaged<SupplierProduct>(async (from, to) => {
                 let b = makeBase();
                 if (selectedBrands.length) b = b.in("brand", selectedBrands);
-
                 const { data, error } = await b.range(from, to);
-                // Match the BuildPage<T> return shape
                 return { data: (data as SupplierProduct[] | null) ?? null, error };
             });
+
 
             const prods = (products as SupplierProduct[]) ?? [];
             const ids = prods.map((p) => p.supplier_product_id);
@@ -306,7 +305,7 @@ export default function ExportPage() {
             const priceMap = new Map<number, number>();
             for (const ch of chunk(ids, 400)) {
                 if (!ch.length) continue;
-                const { data: prices, error: perr } = await supabase
+                const { data: prices, error: perr } = await sb
                     .from("price_history")
                     .select("supplier_product_id, price_ex_gst, effective, start_date")
                     .in("supplier_product_id", ch)
