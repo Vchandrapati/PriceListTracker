@@ -333,10 +333,10 @@ export default function Page() {
                     });
 
                     const text = await resp.text();
-                    let json: any = text;
+                    let json: unknown = text;
                     try {
-                        json = JSON.parse(text);
-                    } catch {}
+                        json = JSON.parse(text) as unknown;
+                    } catch { /* leave as raw text */ }
 
                     if (!resp.ok) {
                         throw new Error(typeof json === "string" ? json : JSON.stringify(json));
