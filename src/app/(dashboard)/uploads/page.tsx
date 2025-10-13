@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Papa from "papaparse";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseBrowser } from "@/lib/supabase";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,8 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
+
+export const dynamic = "force-dynamic"; // optional safeguard
 
 const UNMAPPED = "__UNMAPPED__";
 
@@ -88,7 +91,10 @@ async function sha256Hex(file: File): Promise<string> {
 }
 
 export default function Page() {
-    const supabase = React.useMemo(() => supabaseBrowser(), []);
+    const [sb, setSb] = React.useState<SupabaseClient | null>(null);
+    React.useEffect(() => {
+        setSb(supabaseBrowser());
+    }, []);
     // suppliers
     const [suppliers, setSuppliers] = React.useState<Supplier[]>([]);
     const [suppliersLoading, setSuppliersLoading] = React.useState(false);
@@ -133,16 +139,17 @@ export default function Page() {
 
     // load suppliers
     React.useEffect(() => {
+        if (!sb) return;
         (async () => {
             setSuppliersLoading(true);
-            const { data, error } = await supabase
+            const { data, error } = await sb
                 .from("supplier")
                 .select("supplier_id, name")
                 .order("name", { ascending: true });
             if (!error && data) setSuppliers(data as Supplier[]);
             setSuppliersLoading(false);
         })();
-    }, [supabase]); //
+    }, [sb]);
 
     const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const f = e.target.files?.[0];
@@ -227,22 +234,18 @@ export default function Page() {
     );
 
     async function handleCreateSupplier() {
+        if (!sb) return;
         const name = newSupplierName.trim();
         if (!name) return;
         setCreatingSupplier(true);
-        const { data, error } = await supabase
+        const { data, error } = await sb
             .from("supplier")
             .insert({ name, is_active: true })
             .select("supplier_id, name")
             .single();
         setCreatingSupplier(false);
-        if (error) {
-            alert(error.message);
-            return;
-        }
-        setSuppliers((prev) =>
-            [...prev, data as Supplier].sort((a, b) => a.name.localeCompare(b.name))
-        );
+        if (error) return alert(error.message);
+        setSuppliers(prev => [...prev, data as Supplier].sort((a,b)=>a.name.localeCompare(b.name)));
         setSelectedSupplierId((data as Supplier).supplier_id);
         setNewSupplierName("");
         setShowCreate(false);
@@ -250,6 +253,7 @@ export default function Page() {
 
     const handleSubmit = async () => {
         try {
+            if (!sb) return;
             if (!file) return alert("Choose a CSV file");
             if (!selectedSupplierId) return alert("Select a supplier");
             if (!effectiveDateYMD) return alert("Please pick an effective date.");
@@ -269,20 +273,15 @@ export default function Page() {
             // 1) hash & upload file
             const sha256 = await sha256Hex(file);
             const storagePath = `${selectedSupplierId}/${sha256}.csv`;
-            const { error: upErr } = await supabase.storage
+            const { error: upErr } = await sb.storage
                 .from("price_uploads")
                 .upload(storagePath, file, { upsert: true, contentType: "text/csv" });
             if (upErr) throw upErr;
 
             // 2) create upload row
-            const { data: uploadRow, error: insErr } = await supabase
+            const { data: uploadRow, error: insErr } = await sb
                 .from("upload")
-                .insert({
-                    supplier_id: selectedSupplierId,
-                    filename: file.name,
-                    sha256,
-                    parsed_ok: false,
-                })
+                .insert({ supplier_id: selectedSupplierId, filename: file.name, sha256, parsed_ok: false })
                 .select("*")
                 .single();
             if (insErr) throw insErr;
