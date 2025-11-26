@@ -9,7 +9,18 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import {
-    Menu, Settings, Truck, Wrench, ListChecks, Package, Upload,
+    Menu,
+    Settings,
+    Truck,
+    Wrench,
+    ListChecks,
+    Package,
+    Upload,
+    PanelLeftOpen,
+    PanelLeftClose,
+    ChartBarStacked,
+    CalendarClock,
+    LayoutDashboard,
 } from "lucide-react";
 
 import type { LucideIcon } from "lucide-react";
@@ -24,15 +35,21 @@ const commerce: NavItem[] = [
 
 /** ✅ New “Assets” section */
 const assets: NavItem[] = [
-    { title: "Asset Dashboard", href: "/assets", icon: ListChecks },
+    { title: "Asset Dashboard", href: "/assets", icon: LayoutDashboard },
     { title: "Vehicles", href: "/assets/vehicles", icon: Truck },
     { title: "Tools", href: "/assets/tools", icon: Wrench },
+];
+
+const projects: NavItem[] = [
+    { title: "Project Planner", href: "/projects/planning", icon: CalendarClock },
+    { title: "Project Timelines", href: "/projects/gantt", icon: ChartBarStacked },
 ];
 
 const admin: NavItem[] = [{ title: "Admin", href: "/admin", icon: Settings }];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
-    const [open, setOpen] = useState(false);
+    const [open, setOpen] = useState(false);       // mobile drawer
+    const [collapsed, setCollapsed] = useState(false); // desktop sidebar collapsed
 
     return (
         <div className="min-h-dvh bg-background text-foreground">
@@ -51,6 +68,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                         </SheetContent>
                     </Sheet>
 
+                    {/* Desktop collapse toggle */}
+                    <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setCollapsed((v) => !v)}
+                        className="hidden md:inline-flex"
+                        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                    >
+                        {collapsed ? <PanelLeftOpen className="size-5" /> : <PanelLeftClose className="size-5" />}
+                    </Button>
+
                     {/* Brand */}
                     <Link href="/" className="flex items-center gap-2">
                         <Image src="/CAV logo-v1.png" alt="Complete AV" width={100} height={100} />
@@ -62,9 +92,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </header>
 
             {/* Full-bleed two-column layout; sidebar pinned to left */}
-            <div className="grid grid-cols-1 md:grid-cols-[260px_minmax(0,1fr)]">
+            <div
+                className={cn(
+                    "grid grid-cols-1",
+                    collapsed ? "md:grid-cols-[56px_minmax(0,1fr)]" : "md:grid-cols-[260px_minmax(0,1fr)]"
+                )}
+            >
                 <aside className="hidden h-[calc(100dvh-57px)] border-r md:sticky md:top-[57px] md:block">
-                    <DesktopNav />
+                    <DesktopNav collapsed={collapsed} />
                 </aside>
 
                 {/* Main content area */}
@@ -74,24 +109,38 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     );
 }
 
-function Section({ label, items }: { label: string; items: NavItem[] }) {
+function Section({
+                     label,
+                     items,
+                     collapsed = false,
+                 }: {
+    label: string;
+    items: NavItem[];
+    collapsed?: boolean;
+}) {
     return (
-        <div className="px-2">
-            <div className="px-2 pt-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                {label}
-            </div>
-            <nav className="grid gap-1">
+        <div className={cn("px-2", collapsed && "px-1")}>
+            {/* Section label (hidden when collapsed) */}
+            {!collapsed && (
+                <div className="px-2 pt-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    {label}
+                </div>
+            )}
+            <nav className={cn("grid gap-1", collapsed && "justify-center")}>
                 {items.map((item) => (
                     <Link
                         key={item.href}
                         href={item.href}
                         className={cn(
                             "flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors",
-                            "hover:bg-muted hover:text-[hsl(var(--primary))]"
+                            "hover:bg-muted hover:text-[hsl(var(--primary))]",
+                            collapsed && "justify-center px-2"
                         )}
+                        title={collapsed ? item.title : undefined}
                     >
-                        {item.icon ? <item.icon className="size-4" /> : null}
-                        <span>{item.title}</span>
+                        {item.icon ? <item.icon className="size-4 shrink-0" /> : null}
+                        {/* Hide text when collapsed */}
+                        <span className={cn(collapsed && "sr-only")}>{item.title}</span>
                     </Link>
                 ))}
             </nav>
@@ -99,20 +148,22 @@ function Section({ label, items }: { label: string; items: NavItem[] }) {
     );
 }
 
-function DesktopNav() {
+function DesktopNav({ collapsed }: { collapsed: boolean }) {
     return (
         <div className="flex h-full flex-col">
             <Separator />
             <ScrollArea className="flex-1">
-                <div className="py-2 space-y-2">
-                    <Section label="Commercial" items={commerce} />
-                    {/* ✅ New Assets section in desktop sidebar */}
-                    <Section label="Assets" items={assets} />
-                    <Section label="Settings" items={admin} />
+                <div className={cn("py-2 space-y-2", collapsed && "space-y-1")}>
+                    <Section label="Commercial" items={commerce} collapsed={collapsed} />
+                    <Section label="Assets" items={assets} collapsed={collapsed} />
+                    <Section label="Projects" items={projects} collapsed={collapsed} />
+                    <Section label="Settings" items={admin} collapsed={collapsed} />
                 </div>
             </ScrollArea>
             <Separator />
-            <div className="p-3 text-[11px] text-muted-foreground">© Complete AV</div>
+            <div className={cn("p-3 text-[11px] text-muted-foreground", collapsed && "text-center")}>
+                © Complete AV
+            </div>
         </div>
     );
 }
@@ -120,7 +171,8 @@ function DesktopNav() {
 function MobileNav({ onNavigate }: { onNavigate: () => void }) {
     const groups = [
         { label: "Commercial", items: commerce },
-        { label: "Assets", items: assets },     // ✅ New Assets section in mobile drawer
+        { label: "Assets", items: assets }, // ✅ Assets section in mobile drawer
+        { label: "Projects", items: projects }, // include projects in mobile too
         { label: "Settings", items: admin },
     ];
     return (
