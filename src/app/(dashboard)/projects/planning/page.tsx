@@ -61,6 +61,14 @@ type Project = {
     subtasks: Subtask[];
 };
 
+type ProjectUpdatePatch = {
+    [key: string]: string | number | boolean | null;
+};
+
+type SubtaskUpdatePatch = {
+    [key: string]: string | number | boolean | null;
+};
+
 /** ---- Helper utils ---- */
 // ---- Colour helpers ----
 function getStatusChipClasses(status: ProjectStatus) {
@@ -329,7 +337,7 @@ export default function ProjectOverviewPage() {
         id: number,
         field: keyof Project,
         value: Project[keyof Project],
-        patch: Record<string, any>
+        patch: ProjectUpdatePatch
     ) => {
         setProjects((ps) =>
             ps.map((p) => (p.id === id ? { ...p, [field]: value } : p))
@@ -346,7 +354,7 @@ export default function ProjectOverviewPage() {
         subtaskId: number,
         field: keyof Subtask,
         value: Subtask[keyof Subtask],
-        patch: Record<string, any>
+        patch: SubtaskUpdatePatch
     ) => {
         // Compute whether the project finishDate needs to be extended
         let newProjectFinishDate: string | null = null;
@@ -667,7 +675,7 @@ export default function ProjectOverviewPage() {
                     <select
                         className="bg-white border border-gray-200 text-gray-700 rounded-lg px-3 py-2 text-xs md:text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
                         value={statusFilter}
-                        onChange={(e) => setStatusFilter(e.target.value as any)}
+                        onChange={(e) => setStatusFilter(e.target.value as "All" | ProjectStatus)}
                     >
                         <option value="All">All Status (Active)</option>
                         {statusOptions.map((s) => (
@@ -875,7 +883,7 @@ export default function ProjectOverviewPage() {
                                                                             updateProjectField(
                                                                                 p.id,
                                                                                 field,
-                                                                                e.target.checked as any,
+                                                                                e.target.checked as unknown as Project[keyof Project],
                                                                                 { [dbFieldMap[field]]: e.target.checked }
                                                                             )
                                                                         }
