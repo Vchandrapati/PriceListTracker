@@ -18,6 +18,22 @@ import {
 } from "@/components/ui/table";
 
 /** ---- Types ---- */
+type TriBool = boolean | null;
+
+type ProjectBooleanField =
+    | "shopDrawings"
+    | "deviceRegister"
+    | "ordered"
+    | "jobPacked"
+    | "installed"
+    | "asBuilts";
+
+const cycleTriState = (value: TriBool): TriBool => {
+    if (value === null) return true;
+    if (value === true) return false;
+    return null;
+};
+
 type SubtaskPriority = "Standard" | "Urgent";
 
 type Subtask = {
@@ -48,16 +64,16 @@ type Project = {
     siteName: string;
     salesPerson: string;
     projectManager: string;
-    shopDrawings: boolean;
-    deviceRegister: boolean;
-    ordered: boolean;
-    jobPacked: boolean;
-    installed: boolean;
-    asBuilts: boolean;
-    startDate: string;   // ISO yyyy-mm-dd
-    finishDate: string;  // ISO yyyy-mm-dd
+    shopDrawings: TriBool;
+    deviceRegister: TriBool;
+    ordered: TriBool;
+    jobPacked: TriBool;
+    installed: TriBool;
+    asBuilts: TriBool;
+    startDate: string;
+    finishDate: string;
     archived: boolean;
-    expanded: boolean;   // UI-only
+    expanded: boolean;
     subtasks: Subtask[];
 };
 
@@ -120,19 +136,6 @@ function isSubtaskOverdue(st: Subtask) {
     return due < today;
 }
 
-function calcProgressByDates(startISO: string, endISO: string) {
-    if (!startISO || !endISO) return 0;
-    const today = new Date();
-    const start = new Date(startISO);
-    const end = new Date(endISO);
-    if (today < start) return 0;
-    if (today > end) return 100;
-    const total = end.getTime() - start.getTime();
-    if (total <= 0) return 0;
-    const elapsed = today.getTime() - start.getTime();
-    return Math.max(0, Math.min(100, Math.round((elapsed / total) * 100)));
-}
-
 /** ---- DB row types ---- */
 type ProjectRow = {
     id: number;
@@ -142,12 +145,12 @@ type ProjectRow = {
     site_name: string;
     sales_person: string;
     project_manager: string;
-    shop_drawings: boolean;
-    device_register: boolean;
-    ordered: boolean;
-    job_packed: boolean;
-    installed: boolean;
-    as_builts: boolean;
+    shop_drawings: TriBool;
+    device_register: TriBool;
+    ordered: TriBool;
+    job_packed: TriBool;
+    installed: TriBool;
+    as_builts: TriBool;
     start_date: string | null;
     finish_date: string | null;
     archived: boolean | null;
@@ -180,7 +183,7 @@ function mapRowToProject(row: ProjectRow): Project {
             priority: s.priority ?? "Standard",
             sortOrder: s.sort_order ?? 0,
         }))
-        .sort((a, b) => a.sortOrder - b.sortOrder); // important
+        .sort((a, b) => a.sortOrder - b.sortOrder);
 
     return {
         id: row.id,
@@ -190,12 +193,12 @@ function mapRowToProject(row: ProjectRow): Project {
         siteName: row.site_name ?? "",
         salesPerson: row.sales_person ?? "",
         projectManager: row.project_manager ?? "",
-        shopDrawings: row.shop_drawings ?? false,
-        deviceRegister: row.device_register ?? false,
-        ordered: row.ordered ?? false,
-        jobPacked: row.job_packed ?? false,
-        installed: row.installed ?? false,
-        asBuilts: row.as_builts ?? false,
+        shopDrawings: row.shop_drawings,
+        deviceRegister: row.device_register,
+        ordered: row.ordered,
+        jobPacked: row.job_packed,
+        installed: row.installed,
+        asBuilts: row.as_builts,
         startDate: row.start_date ?? "",
         finishDate: row.finish_date ?? "",
         archived: row.archived ?? false,
@@ -724,19 +727,42 @@ export default function ProjectOverviewPage() {
                                     <TableRow className="h-9 md:h-10">
                                         <TableHead className="px-2 w-6 md:w-8"></TableHead>
                                         <TableHead className="px-2 whitespace-nowrap">Job # - Name</TableHead>
-                                        <TableHead className="pl-4 pr-2 whitespace-nowrap">Status</TableHead>
+                                        <TableHead className="pl-4 pr-2 whitespace-nowrap w-[120px]">Status</TableHead>
                                         <TableHead className="pl-4 pr-2 whitespace-nowrap">Site</TableHead>
                                         <TableHead className="pl-4 pr-2 whitespace-nowrap">Sales</TableHead>
                                         <TableHead className="pl-4 pr-2 whitespace-nowrap">PM</TableHead>
-                                        <TableHead className="px-1.5 text-center whitespace-nowrap">Drawings</TableHead>
-                                        <TableHead className="px-1.5 text-center whitespace-nowrap">Register</TableHead>
-                                        <TableHead className="px-1.5 text-center whitespace-nowrap">Ordered</TableHead>
-                                        <TableHead className="px-1.5 text-center whitespace-nowrap">Packed</TableHead>
-                                        <TableHead className="px-1.5 text-center whitespace-nowrap">Installed</TableHead>
-                                        <TableHead className="px-1.5 text-center whitespace-nowrap">As-builts</TableHead>
+                                        <TableHead className="px-[2px] w-7 text-center align-middle">
+                                            <div className="flex h-16 items-center justify-center">
+                                                <span className="th-vertical">Drawings</span>
+                                            </div>
+                                        </TableHead>
+                                        <TableHead className="px-[2px] w-7 text-center align-middle">
+                                            <div className="flex h-16 items-center justify-center">
+                                                <span className="th-vertical">Register</span>
+                                            </div>
+                                        </TableHead>
+                                        <TableHead className="px-[2px] w-7 text-center align-middle">
+                                            <div className="flex h-16 items-center justify-center">
+                                                <span className="th-vertical">Ordered</span>
+                                            </div>
+                                        </TableHead>
+                                        <TableHead className="px-[2px] w-7 text-center align-middle">
+                                            <div className="flex h-16 items-center justify-center">
+                                                <span className="th-vertical">Packed</span>
+                                            </div>
+                                        </TableHead>
+                                        <TableHead className="px-[2px] w-7 text-center align-middle">
+                                            <div className="flex h-16 items-center justify-center">
+                                                <span className="th-vertical">Installed</span>
+                                            </div>
+                                        </TableHead>
+                                        <TableHead className="px-[2px] w-7 text-center align-middle">
+                                            <div className="flex h-16 items-center justify-center">
+                                                <span className="th-vertical">As-builts</span>
+                                            </div>
+                                        </TableHead>
                                         <TableHead className="px-2 whitespace-nowrap">Start</TableHead>
                                         <TableHead className="px-2 whitespace-nowrap">Finish</TableHead>
-                                        <TableHead className="px-2 whitespace-nowrap">Progress</TableHead>
                                         <TableHead className="px-2 whitespace-nowrap"></TableHead>
                                     </TableRow>
                                 </TableHeader>
@@ -744,7 +770,6 @@ export default function ProjectOverviewPage() {
                                 <TableBody>
                                     {!loading &&
                                         activeProjects.map((p) => {
-                                            const prog = calcProgressByDates(p.startDate, p.finishDate);
                                             const overdue = p.subtasks.filter(isSubtaskOverdue).length;
                                             const done = p.subtasks.filter((s) => s.completed).length;
 
@@ -795,7 +820,7 @@ export default function ProjectOverviewPage() {
                                                         </TableCell>
 
                                                         {/* Status */}
-                                                        <TableCell className="pl-4 pr-2 align-middle">
+                                                        <TableCell className="pl-4 pr-2 align-middle w-[120px]">
                                                             <select
                                                                 value={p.status}
                                                                 onChange={(e) =>
@@ -807,7 +832,7 @@ export default function ProjectOverviewPage() {
                                                                     )
                                                                 }
                                                                 className={
-                                                                    "w-full rounded-full px-2 py-1 text-[10px] md:text-xs border " +
+                                                                    "rounded-full px-2 py-1 text-[10px] md:text-xs border max-w-[110px] w-full md:w-auto " +
                                                                     getStatusChipClasses(p.status)
                                                                 }
                                                             >
@@ -864,9 +889,9 @@ export default function ProjectOverviewPage() {
                                                                 "jobPacked",
                                                                 "installed",
                                                                 "asBuilts",
-                                                            ] as (keyof Project)[]
+                                                            ] as ProjectBooleanField[]
                                                         ).map((field) => {
-                                                            const dbFieldMap: Record<string, string> = {
+                                                            const dbFieldMap: Record<ProjectBooleanField, string> = {
                                                                 shopDrawings: "shop_drawings",
                                                                 deviceRegister: "device_register",
                                                                 ordered: "ordered",
@@ -874,21 +899,27 @@ export default function ProjectOverviewPage() {
                                                                 installed: "installed",
                                                                 asBuilts: "as_builts",
                                                             };
+                                                            const current = p[field] as TriBool;
+
                                                             return (
-                                                                <TableCell key={field} className="px-1.5 text-center align-middle">
-                                                                    <input
-                                                                        type="checkbox"
-                                                                        checked={Boolean(p[field])}
-                                                                        onChange={(e) =>
+                                                                <TableCell key={field} className="px-[2px] w-7 text-center align-middle">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => {
+                                                                            const next = cycleTriState(current);
                                                                             updateProjectField(
                                                                                 p.id,
                                                                                 field,
-                                                                                e.target.checked as unknown as Project[keyof Project],
-                                                                                { [dbFieldMap[field]]: e.target.checked }
-                                                                            )
-                                                                        }
-                                                                        className="w-4 h-4"
-                                                                    />
+                                                                                next as Project[keyof Project],
+                                                                                { [dbFieldMap[field]]: next }
+                                                                            );
+                                                                        }}
+                                                                        className="mx-auto flex h-5 w-5 items-center justify-center rounded border border-gray-300 bg-white text-[10px] leading-none text-black"
+                                                                    >
+                                                                        {current === true && "✓"}
+                                                                        {current === false && "✕"}
+                                                                        {current === null && ""}
+                                                                    </button>
                                                                 </TableCell>
                                                             );
                                                         })}
@@ -918,20 +949,6 @@ export default function ProjectOverviewPage() {
                                                             />
                                                         </TableCell>
 
-                                                        <TableCell className="px-2 align-middle">
-                                                            <div className="flex items-center gap-2">
-                                                                <div className="w-16 md:w-20 h-2 bg-gray-200 rounded-full overflow-hidden">
-                                                                    <div
-                                                                        className="h-full bg-orange-500"
-                                                                        style={{ width: `${prog}%` }}
-                                                                    />
-                                                                </div>
-                                                                <span className="text-muted-foreground text-[10px] md:text-xs font-medium whitespace-nowrap">
-                                  {prog}%
-                                </span>
-                                                            </div>
-                                                        </TableCell>
-
                                                         {/* Archive/Delete actions */}
                                                         <TableCell className="px-2 align-middle text-right">
                                                             <div className="flex flex-col items-end gap-1">
@@ -954,7 +971,7 @@ export default function ProjectOverviewPage() {
                                                     {/* Subtasks (expanded row) */}
                                                     {p.expanded && (
                                                         <TableRow>
-                                                            <TableCell colSpan={16} className="bg-muted/30 px-2 py-3">
+                                                            <TableCell colSpan={15} className="bg-muted/30 px-2 py-3">
                                                                 <div className="ml-4 md:ml-8 space-y-3">
                                                                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                                                                         <div className="text-xs md:text-sm font-medium">
@@ -1171,7 +1188,7 @@ export default function ProjectOverviewPage() {
                                     {!loading && activeProjects.length === 0 && (
                                         <TableRow>
                                             <TableCell
-                                                colSpan={16}
+                                                colSpan={15}
                                                 className="text-center text-xs md:text-sm text-muted-foreground py-8"
                                             >
                                                 No active projects match your current filters.
@@ -1182,7 +1199,7 @@ export default function ProjectOverviewPage() {
                                     {loading && (
                                         <TableRow>
                                             <TableCell
-                                                colSpan={16}
+                                                colSpan={15}
                                                 className="text-center text-xs md:text-sm text-muted-foreground py-8"
                                             >
                                                 Loading…
@@ -1270,7 +1287,7 @@ export default function ProjectOverviewPage() {
                             <div className="overflow-x-auto">
                                 <Table className="w-full text-[11px] md:text-[13px] lg:text-[14px]">
                                     <TableHeader>
-                                        <TableRow className="h-9 md:h-10">
+                                        <TableRow className="h-20 md:h-25">
                                             <TableHead className="px-2 whitespace-nowrap">Job # - Name</TableHead>
                                             <TableHead className="px-2 whitespace-nowrap">Status</TableHead>
                                             <TableHead className="px-2 whitespace-nowrap">Site</TableHead>

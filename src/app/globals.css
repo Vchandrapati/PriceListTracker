@@ -29,6 +29,15 @@
     --radius: 14px;
 }
 
+.th-vertical {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    transform: rotate(180deg); /* so it reads bottom-to-top */
+    font-size: 10px;
+    line-height: 1;
+    white-space: nowrap;
+}
+
 .dark {
     --background: 222 47% 6%;
     --foreground: 210 40% 98%;
