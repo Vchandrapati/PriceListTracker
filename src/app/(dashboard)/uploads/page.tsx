@@ -36,18 +36,14 @@ type Canonical =
     | "brand"
     | "mpn"
     | "description"
-    | "price_ex_gst"
-    | "uom"
-    | "pack_size";
+    | "price_ex_gst";
 
 const CANONICAL_FIELDS: { value: Canonical; label: string; required: boolean }[] = [
     { value: "supplier_sku", label: "Supplier SKU", required: true },
-    { value: "mpn", label: "Manufacturer Part Number", required: true },
+    { value: "mpn", label: "Manufacturer Part Number (optional)", required: false },
     { value: "description", label: "Product Description", required: true },
     { value: "price_ex_gst", label: "Price ex GST", required: true },
     { value: "brand", label: "Brand (optional — defaults to supplier name)", required: false },
-    { value: "uom", label: "Unit of Measure (optional)", required: false },
-    { value: "pack_size", label: "Pack Size (optional)", required: false },
 ];
 
 // yyyy-mm-dd (from <input type="date">) → dd-mm-yyyy for backend
@@ -292,6 +288,13 @@ export default function Page() {
                 const v = mapping[k];
                 if (v != null && v !== "") wireMapping[k] = v;
             });
+
+            // 2b) clear existing products for this supplier so the upload starts fresh
+            const { error: clearErr } = await sb
+                .from("supplier_product")
+                .delete()
+                .eq("supplier_id", selectedSupplierId);
+            if (clearErr) throw clearErr;
 
             // 3) trigger ingestion in CHUNKS (70) with live progress
             const effective_date_ddmmyyyy = ymdToDmy(effectiveDateYMD);

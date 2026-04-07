@@ -9,10 +9,10 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import {SupabaseClient} from "@supabase/supabase-js";
+import { SupabaseClient } from "@supabase/supabase-js";
 
 type Supplier = { supplier_id: number; name: string };
-type Brand = { brand_id: number; name: string };
+type Brand = { name: string };
 const ALL = "__ALL__";
 
 type ItemRow = {
@@ -23,10 +23,8 @@ type ItemRow = {
     mpn: string | null;
     supplier_sku: string | null;
     supplier_description: string | null;
-    uom: string;
-    pack_size: number;
-    latest_price_ex_gst: number | null;
-    latest_start_date: string | null; // from price_history.start_date
+    price_ex_gst: number | null;
+    effective_from: string | null;
 };
 
 const PAGE_SIZE = 50;
@@ -61,18 +59,30 @@ export default function ItemsPage() {
     const [rows, setRows] = React.useState<ItemRow[]>([]);
     const [loading, setLoading] = React.useState(false);
 
-    // load filter options
+    // load suppliers once
     React.useEffect(() => {
         if (!sb) return;
         (async () => {
-            const [{ data: sup }, { data: br }] = await Promise.all([
-                sb.from("supplier").select("supplier_id,name").order("name"),
-                sb.from("brand").select("brand_id,name").order("name"),
-            ]);
+            const { data: sup } = await sb.from("supplier").select("supplier_id,name").order("name");
             setSuppliers((sup ?? []) as Supplier[]);
-            setBrands((br ?? []) as Brand[]);
         })();
     }, [sb]);
+
+    // reset brand immediately when supplier changes so fetchItems doesn't fire with a stale brand
+    React.useEffect(() => {
+        setBrandId("");
+    }, [supplierId]);
+
+    // load brands filtered by selected supplier
+    React.useEffect(() => {
+        if (!sb) return;
+        (async () => {
+            const { data: br } = await sb.rpc("distinct_brands_for_supplier",
+                supplierId ? { p_supplier_id: Number(supplierId) } : {}
+            );
+            setBrands((br ?? []) as Brand[]);
+        })();
+    }, [sb, supplierId]);
 
     // debounce search
     const [searchDeb, setSearchDeb] = React.useState(search);
@@ -103,26 +113,16 @@ export default function ItemsPage() {
       mpn,
       supplier_sku,
       supplier_description,
-      uom,
-      pack_size,
-      price_history:price_history(
-        price_id,
-        price_ex_gst,
-        start_date
-      )
+      price_ex_gst,
+      effective_from
     `;
 
         let query = sb
             .from("supplier_product")
-            .select(selectCols, { count: "exact" })
-            .order("start_date", { foreignTable: "price_history", ascending: false })
-            .limit(1, { foreignTable: "price_history" });
+            .select(selectCols, { count: "exact" });
 
         if (supplierId) query = query.eq("supplier_id", Number(supplierId));
-        if (brandId) {
-            const b = brands.find((x) => String(x.brand_id) === brandId);
-            if (b?.name) query = query.eq("brand", b.name);
-        }
+        if (brandId) query = query.eq("brand", brandId);
         if (searchDeb) {
             const norm = normalizeKey(searchDeb);
             query = query.ilike("mpn", `%${norm}%`);
@@ -141,7 +141,6 @@ export default function ItemsPage() {
             return;
         }
 
-        type PriceHistoryRow = { price_id: number; price_ex_gst: number | null; start_date: string | null; };
         type SupplierRel = { name: string } | { name: string }[] | null;
         type SupplierProductRowRaw = {
             supplier_product_id: number;
@@ -151,13 +150,11 @@ export default function ItemsPage() {
             mpn: string | null;
             supplier_sku: string | null;
             supplier_description: string | null;
-            uom: string | null;
-            pack_size: number | null;
-            price_history: PriceHistoryRow[] | null;
+            price_ex_gst: number | null;
+            effective_from: string | null;
         };
 
         const shaped: ItemRow[] = ((data ?? []) as SupplierProductRowRaw[]).map((r) => {
-            const ph = (r.price_history ?? [])[0] ?? null;
             const supplierName = Array.isArray(r.supplier) ? (r.supplier[0]?.name ?? "") : (r.supplier?.name ?? "");
             return {
                 supplier_product_id: r.supplier_product_id,
@@ -167,17 +164,15 @@ export default function ItemsPage() {
                 mpn: r.mpn ?? null,
                 supplier_sku: r.supplier_sku ?? null,
                 supplier_description: r.supplier_description ?? null,
-                uom: r.uom ?? "ea",
-                pack_size: r.pack_size ?? 1,
-                latest_price_ex_gst: ph?.price_ex_gst ?? null,
-                latest_start_date: ph?.start_date ?? null,
+                price_ex_gst: r.price_ex_gst ?? null,
+                effective_from: r.effective_from ?? null,
             };
         });
 
         setRows(shaped);
         setTotal(count ?? 0);
         setLoading(false);
-    }, [sb, supplierId, brandId, searchDeb, page, brands]);
+    }, [sb, supplierId, brandId, searchDeb, page]);
 
     React.useEffect(() => {
         fetchItems();
@@ -186,9 +181,7 @@ export default function ItemsPage() {
     const totalPages = Math.max(1, Math.ceil((total ?? 0) / PAGE_SIZE));
 
     return (
-        // ❗ Full-width: no max-w container
         <div className="p-4 md:p-6 lg:p-8 space-y-4">
-            {/* ❌ Removed breadcrumbs prop */}
             <PageHeader title="Items" subtitle="Search by supplier, brand, or MPN." />
 
             <Card>
@@ -221,7 +214,7 @@ export default function ItemsPage() {
                                 <SelectContent className="bg-white text-foreground border shadow-md">
                                     <SelectItem value={ALL}>All brands</SelectItem>
                                     {brands.map((b) => (
-                                        <SelectItem key={b.brand_id} value={String(b.brand_id)}>
+                                        <SelectItem key={b.name} value={b.name}>
                                             {b.name}
                                         </SelectItem>
                                     ))}
@@ -237,7 +230,7 @@ export default function ItemsPage() {
                                 onChange={(e) => setSearch(e.target.value)}
                             />
                             <p className="text-xs text-muted-foreground">
-                                We normalise your input (spaces → “-”, “&” → “,”) to match stored MPNs.
+                                We normalise your input (spaces → &quot;-&quot;, &quot;&amp;&quot; → &quot;,&quot;) to match stored MPNs.
                             </p>
                         </div>
                     </div>
@@ -245,7 +238,7 @@ export default function ItemsPage() {
                     {/* Table */}
                     <div className="rounded-xl border bg-card overflow-hidden">
                         <div className="overflow-x-auto">
-                            <Table className="w-full min-w-[1200px] text-[15px] md:text-base">
+                            <Table className="w-full min-w-[1000px] text-[15px] md:text-base">
                                 <TableHeader>
                                     <TableRow className="h-12">
                                         <TableHead className="px-4">Supplier</TableHead>
@@ -254,8 +247,6 @@ export default function ItemsPage() {
                                         <TableHead className="px-4">Supplier SKU</TableHead>
                                         <TableHead className="px-4">Description</TableHead>
                                         <TableHead className="px-4 text-right">Price ex GST</TableHead>
-                                        <TableHead className="px-4">UOM</TableHead>
-                                        <TableHead className="px-4">Pack</TableHead>
                                         <TableHead className="px-4">Effective From</TableHead>
                                     </TableRow>
                                 </TableHeader>
@@ -263,7 +254,7 @@ export default function ItemsPage() {
                                 <TableBody className="[&>tr]:h-12 [&>tr>td]:py-3 [&>tr>td]:px-4 [&>tr>td]:whitespace-nowrap">
                                     {!loading && rows.length === 0 && (
                                         <TableRow>
-                                            <TableCell colSpan={9} className="text-center text-sm text-muted-foreground">
+                                            <TableCell colSpan={7} className="text-center text-sm text-muted-foreground">
                                                 No items found.
                                             </TableCell>
                                         </TableRow>
@@ -278,17 +269,15 @@ export default function ItemsPage() {
                                                 <TableCell>{r.supplier_sku ?? "—"}</TableCell>
                                                 <TableCell className="max-w-[700px] truncate">{r.supplier_description || "—"}</TableCell>
                                                 <TableCell className="text-right">
-                                                    {r.latest_price_ex_gst != null ? r.latest_price_ex_gst.toFixed(2) : "—"}
+                                                    {r.price_ex_gst != null ? r.price_ex_gst.toFixed(2) : "—"}
                                                 </TableCell>
-                                                <TableCell>{r.uom}</TableCell>
-                                                <TableCell>{r.pack_size}</TableCell>
-                                                <TableCell>{r.latest_start_date ?? "—"}</TableCell>
+                                                <TableCell>{r.effective_from ?? "—"}</TableCell>
                                             </TableRow>
                                         ))}
 
                                     {loading && (
                                         <TableRow>
-                                            <TableCell colSpan={9} className="text-center text-sm text-muted-foreground">
+                                            <TableCell colSpan={7} className="text-center text-sm text-muted-foreground">
                                                 Loading…
                                             </TableCell>
                                         </TableRow>
@@ -317,15 +306,6 @@ export default function ItemsPage() {
                             <div className="px-2 text-sm">
                                 Page {page} / {totalPages}
                             </div>
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                                disabled={page <= 1 || loading}
-                            >
-                                Previous
-                            </Button>
-
                             <Button
                                 variant="outline"
                                 size="sm"

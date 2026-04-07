@@ -29,18 +29,10 @@ type SupplierProduct = {
     supplier_sku: string | null;
     supplier_description: string | null;
     is_active: boolean;
-    uom: string;
-    pack_size: number;
     brand: string | null;
     mpn: string | null;
-};
-
-type PriceRow = {
-    price_id: number;
-    supplier_product_id: number;
-    price_ex_gst: number;
-    effective: string;
-    start_date: string;
+    price_ex_gst: number | null;
+    effective_from: string | null;
 };
 
 // ---------- Helpers ----------
@@ -75,16 +67,7 @@ function toISODate(date: Date) {
     const d = String(date.getDate()).padStart(2, "0");
     return `${y}-${m}-${d}`;
 }
-function addDays(date: Date, days: number) {
-    const d = new Date(date);
-    d.setDate(d.getDate() + days);
-    return d;
-}
-function chunk<T>(arr: T[], n = 500) {
-    const out: T[][] = [];
-    for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
-    return out;
-}
+
 
 // Fallback headers (includes Group/Subgroups + the 6 you care about)
 const FALLBACK_HEADERS = [
@@ -108,6 +91,7 @@ const HEADER_KEYS = {
     splitCost: "Split Cost Price",
     manufacturer: "Manufacturer",
     partNumber: "Part Number",
+    supplierPartNumber: "Supplier Part Number",
 
     group: ["Group (Ignored for Updates)", "Group"],
     subgroup1: ["Subgroup 1 (Ignored for Updates)", "Subgroup 1"],
@@ -139,7 +123,7 @@ export default function ExportPage() {
     const [selectedBrands, setSelectedBrands] = React.useState<string[]>([]);
 
     const [loading, setLoading] = React.useState(false);
-    const [rows, setRows] = React.useState<(SupplierProduct & { price_ex_gst: number | null })[]>([]);
+    const [rows, setRows] = React.useState<SupplierProduct[]>([]);
 
     const [templateHeaders, setTemplateHeaders] = React.useState<string[] | null>(null);
 
@@ -188,7 +172,7 @@ export default function ExportPage() {
     // Items in simPRO but missing from new export (EOL candidates)
     const eolCandidates = React.useMemo(() => {
         if (!simproRows.length || !simproHeaders) return [] as Array<{
-            supplier_part: string; manufacturer: string; mpn: string;
+            supplier_part: string; manufacturer: string; mpn: string; description: string;
         }>;
 
         const newKeySet = new Set(
@@ -200,9 +184,10 @@ export default function ExportPage() {
         const spnH = pickHeader(simproHeaders, ["Supplier Part Number", "Part Number"]);
         const manH = pickHeader(simproHeaders, "Manufacturer");
         const mpnH = pickHeader(simproHeaders, ["Universal Product Code", "UPC", "MPN"]);
+        const descH = pickHeader(simproHeaders, "Description");
         if (!spnH) return [];
 
-        const out: Array<{ supplier_part: string; manufacturer: string; mpn: string; }> = [];
+        const out: Array<{ supplier_part: string; manufacturer: string; mpn: string; description: string; }> = [];
         for (const r of simproRows) {
             const partRaw = String(r[spnH] ?? "");
             const simproKey = normKey(partRaw);
@@ -212,6 +197,7 @@ export default function ExportPage() {
                     supplier_part: partRaw.trim(),
                     manufacturer: manH ? String(r[manH] ?? "") : "",
                     mpn: mpnH ? String(r[mpnH] ?? "") : "",
+                    description: descH ? String(r[descH] ?? "") : "",
                 });
             }
         }
@@ -231,27 +217,12 @@ export default function ExportPage() {
         })();
     }, [sb]);
 
-// fetch brands for supplier
+    // fetch brands for supplier
     React.useEffect(() => {
         if (!sb || !supplierId) return;
         (async () => {
-            const makeBase = () =>
-                sb.from("supplier_product")
-                    .select("brand")
-                    .eq("supplier_id", supplierId)
-                    .eq("is_active", true)
-                    .order("supplier_product_id", { ascending: true });
-
-            const brandRows = await selectPaged<{ brand: string | null }>(async (from, to) => {
-                const { data, error } = await makeBase().range(from, to);
-                return { data: data ?? null, error };
-            });
-
-            const uniq = Array.from(new Set(brandRows.map(r => (r.brand ?? "").trim())))
-                .filter(Boolean)
-                .sort((a, b) => a.localeCompare(b));
-
-            setBrands(uniq);
+            const { data } = await sb.rpc("distinct_brands_for_supplier", { p_supplier_id: supplierId });
+            setBrands((data ?? []).map((r: { name: string }) => r.name));
             setSelectedBrands([]);
             setRows([]);
         })();
@@ -281,7 +252,7 @@ export default function ExportPage() {
         try {
             const makeBase = () =>
                 sb.from("supplier_product")
-                    .select("supplier_product_id, supplier_id, supplier_sku, supplier_description, is_active, uom, pack_size, brand, mpn")
+                    .select("supplier_product_id, supplier_id, supplier_sku, supplier_description, is_active, brand, mpn, price_ex_gst, effective_from")
                     .eq("supplier_id", supplierId)
                     .eq("is_active", true)
                     .order("supplier_product_id", { ascending: true });
@@ -293,31 +264,7 @@ export default function ExportPage() {
                 return { data: (data as SupplierProduct[] | null) ?? null, error };
             });
 
-
-            const prods = (products as SupplierProduct[]) ?? [];
-            const ids = prods.map((p) => p.supplier_product_id);
-
-            // active price rows overlapping [today, tomorrow)
-            const today = new Date();
-            const iso = toISODate(today);
-            const next = toISODate(addDays(today, 1));
-
-            const priceMap = new Map<number, number>();
-            for (const ch of chunk(ids, 400)) {
-                if (!ch.length) continue;
-                const { data: prices, error: perr } = await sb
-                    .from("price_history")
-                    .select("supplier_product_id, price_ex_gst, effective, start_date")
-                    .in("supplier_product_id", ch)
-                    .filter("effective", "ov", `[${iso},${next})`);
-                if (perr) throw perr;
-                for (const r of (prices as PriceRow[]) ?? []) {
-                    priceMap.set(r.supplier_product_id, r.price_ex_gst);
-                }
-            }
-
-            const withPrice = prods.map((p) => ({ ...p, price_ex_gst: priceMap.get(p.supplier_product_id) ?? null }));
-            setRows(withPrice);
+            setRows(products);
         } catch (e: unknown) {
             const msg = e instanceof Error ? e.message : "Failed to fetch data";
             alert(msg);
@@ -337,14 +284,13 @@ export default function ExportPage() {
             splitCost: pickHeader(hdrs, HEADER_KEYS.splitCost),
             manufacturer: pickHeader(hdrs, HEADER_KEYS.manufacturer),
             partNumber: pickHeader(hdrs, HEADER_KEYS.partNumber),
+            supplierPartNumber: pickHeader(hdrs, HEADER_KEYS.supplierPartNumber),
 
             group: pickHeader(hdrs, HEADER_KEYS.group),
             subgroup1: pickHeader(hdrs, HEADER_KEYS.subgroup1),
             subgroup2: pickHeader(hdrs, HEADER_KEYS.subgroup2),
             subgroup3: pickHeader(hdrs, HEADER_KEYS.subgroup3),
         } as const;
-
-        const supplierName = suppliers.find(s => s.supplier_id === supplierId)?.name ?? "";
 
         // Build rows as object keyed by all template headers (others left blank)
         const output: Record<string, string | number | null>[] = [];
@@ -355,8 +301,9 @@ export default function ExportPage() {
             const row: Record<string, string | number | null> = {};
             for (const h of hdrs) row[h] = "";
 
-            // Part Number
+            // Part Number + Supplier Part Number (same value)
             if (H.partNumber) row[H.partNumber] = r.supplier_sku ?? "";
+            if (H.supplierPartNumber) row[H.supplierPartNumber] = r.supplier_sku ?? "";
 
             // Description: Brand • MPN • Description
             if (H.description) {
@@ -391,13 +338,12 @@ export default function ExportPage() {
                 const row: Record<string, string | number | null> = {};
                 for (const h of hdrs) row[h] = "";
 
-                // Part Number (Supplier Part Number from simPRO)
-                if (H.partNumber) row[H.partNumber] = e.supplier_part;
+                // Part Number → ***EOL***, Supplier Part Number → original SKU
+                if (H.partNumber) row[H.partNumber] = "***EOL***";
+                if (H.supplierPartNumber) row[H.supplierPartNumber] = e.supplier_part;
 
-                // Description: ***EOL*** Brand • MPN • Supplier
-                if (H.description) {
-                    row[H.description] = `***EOL*** ${[e.manufacturer, e.mpn, supplierName].filter(Boolean).join(" • ")}`;
-                }
+                // Description: keep original simPRO description
+                if (H.description) row[H.description] = e.description;
 
                 // Prices -> 0
                 if (H.trade) row[H.trade] = 0;
@@ -572,25 +518,8 @@ export default function ExportPage() {
                                 Include EOL items (present in simPRO but missing in new export)
                             </label>
                             <span className="text-xs text-muted-foreground">
-                EOL to add: {
-                                React.useMemo(() => {
-                                    if (!simproRows.length || !simproHeaders) return 0;
-                                    const newKeys = new Set(
-                                        (rows || [])
-                                            .map(r => normKey(r.mpn || r.supplier_sku))
-                                            .filter(Boolean)
-                                    );
-                                    const spnH = pickHeader(simproHeaders, ["Supplier Part Number", "Part Number"]);
-                                    if (!spnH) return 0;
-                                    let count = 0;
-                                    for (const r of simproRows) {
-                                        const key = normKey(String(r[spnH] ?? ""));
-                                        if (key && !newKeys.has(key)) count++;
-                                    }
-                                    return count;
-                                }, [simproRows, simproHeaders, rows]).toLocaleString()
-                            }
-              </span>
+                                EOL to add: {eolCandidates.length.toLocaleString()}
+                            </span>
                         </div>
                     </div>
 
