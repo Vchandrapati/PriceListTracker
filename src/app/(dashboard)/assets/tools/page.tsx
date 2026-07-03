@@ -98,8 +98,8 @@ export default function ToolsPage() {
                                         <TableRow key={r.toolName}>
                                             <TableCell>{r.toolName}</TableCell>
                                             <TableCell>{r.status}</TableCell>
-                                            <TableCell>{r.contractor ?? "—"}</TableCell>
-                                            <TableCell>{r.checkedOutBy ?? "—"}</TableCell>
+                                            <TableCell>{r.contractor ?? "-"}</TableCell>
+                                            <TableCell>{r.checkedOutBy ?? "-"}</TableCell>
                                             <TableCell>{r.location}</TableCell>
                                             <TableCell className="max-w-[420px] truncate">{r.lastActivity}</TableCell>
                                             <TableCell>

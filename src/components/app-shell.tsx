@@ -1,14 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { supabaseBrowser } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import {
+    Calculator,
+    ChartNoAxesCombined,
+    ClipboardList,
+    LogOut,
     Menu,
     Settings,
     Truck,
@@ -19,7 +24,6 @@ import {
     PanelLeftOpen,
     PanelLeftClose,
     ChartBarStacked,
-    CalendarClock,
     LayoutDashboard,
 } from "lucide-react";
 
@@ -28,6 +32,13 @@ import type { LucideIcon } from "lucide-react";
 type NavItem = { title: string; href: string; icon?: LucideIcon };
 
 const commerce: NavItem[] = [
+    { title: "Items", href: "/items", icon: ListChecks },
+    { title: "Export", href: "/export", icon: Package },
+];
+
+// Shown only when the signed-in user is in app_admins (RLS enforces this
+// server-side regardless; hiding it is just to keep the nav honest).
+const commerceAdmin: NavItem[] = [
     { title: "Items", href: "/items", icon: ListChecks },
     { title: "New Upload", href: "/uploads", icon: Upload },
     { title: "Export", href: "/export", icon: Package },
@@ -41,8 +52,13 @@ const assets: NavItem[] = [
 ];
 
 const projects: NavItem[] = [
-    { title: "Project Planner", href: "/projects/planning", icon: CalendarClock },
     { title: "Project Timelines", href: "/projects/gantt", icon: ChartBarStacked },
+];
+
+const reports: NavItem[] = [
+    { title: "Biz Ops Report", href: "/reports/bizops", icon: ChartNoAxesCombined },
+    { title: "Labour Dashboard", href: "/reports/labour-dashboard", icon: ClipboardList },
+    { title: "Labour Calculator", href: "/reports/labour-calculator", icon: Calculator },
 ];
 
 const admin: NavItem[] = [{ title: "Admin", href: "/admin", icon: Settings }];
@@ -50,6 +66,20 @@ const admin: NavItem[] = [{ title: "Admin", href: "/admin", icon: Settings }];
 export default function AppShell({ children }: { children: React.ReactNode }) {
     const [open, setOpen] = useState(false);       // mobile drawer
     const [collapsed, setCollapsed] = useState(false); // desktop sidebar collapsed
+    const [isAdmin, setIsAdmin] = useState(false);
+    const [userEmail, setUserEmail] = useState<string | null>(null);
+
+    useEffect(() => {
+        const sb = supabaseBrowser();
+        sb.auth.getUser().then(({ data }) => setUserEmail(data.user?.email ?? null));
+        sb.rpc("is_admin").then(({ data }) => setIsAdmin(data === true));
+    }, []);
+
+    const commerceItems = isAdmin ? commerceAdmin : commerce;
+
+    async function handleSignOut() {
+        await supabaseBrowser().auth.signOut();
+    }
 
     return (
         <div className="min-h-dvh bg-background text-foreground">
@@ -64,7 +94,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                             </Button>
                         </SheetTrigger>
                         <SheetContent side="left" className="p-0">
-                            <MobileNav onNavigate={() => setOpen(false)} />
+                            <MobileNav commerceItems={commerceItems} onNavigate={() => setOpen(false)} />
                         </SheetContent>
                     </Sheet>
 
@@ -84,10 +114,24 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     {/* Brand */}
                     <Link href="/" className="flex items-center gap-2">
                         <Image src="/CAV logo-v1.png" alt="Complete AV" width={100} height={100} />
-                        <span className="font-semibold tracking-tight">Complete AV — Internal</span>
+                        <span className="font-semibold tracking-tight">Complete AV - Internal</span>
                     </Link>
 
-                    <div className="ml-auto" />
+                    <div className="ml-auto flex items-center gap-2">
+                        {userEmail && (
+                            <span className="hidden text-xs text-muted-foreground sm:inline">{userEmail}</span>
+                        )}
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={handleSignOut}
+                            aria-label="Sign out"
+                            title="Sign out"
+                        >
+                            <LogOut className="size-5" />
+                        </Button>
+                    </div>
                 </div>
             </header>
 
@@ -99,7 +143,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 )}
             >
                 <aside className="hidden h-[calc(100dvh-57px)] border-r md:sticky md:top-[57px] md:block">
-                    <DesktopNav collapsed={collapsed} />
+                    <DesktopNav commerceItems={commerceItems} collapsed={collapsed} />
                 </aside>
 
                 {/* Main content area */}
@@ -148,13 +192,14 @@ function Section({
     );
 }
 
-function DesktopNav({ collapsed }: { collapsed: boolean }) {
+function DesktopNav({ commerceItems, collapsed }: { commerceItems: NavItem[]; collapsed: boolean }) {
     return (
         <div className="flex h-full flex-col">
             <Separator />
             <ScrollArea className="flex-1">
                 <div className={cn("py-2 space-y-2", collapsed && "space-y-1")}>
-                    <Section label="Commercial" items={commerce} collapsed={collapsed} />
+                    <Section label="Commercial" items={commerceItems} collapsed={collapsed} />
+                    <Section label="Reports" items={reports} collapsed={collapsed} />
                     <Section label="Assets" items={assets} collapsed={collapsed} />
                     <Section label="Projects" items={projects} collapsed={collapsed} />
                     <Section label="Settings" items={admin} collapsed={collapsed} />
@@ -168,9 +213,10 @@ function DesktopNav({ collapsed }: { collapsed: boolean }) {
     );
 }
 
-function MobileNav({ onNavigate }: { onNavigate: () => void }) {
+function MobileNav({ commerceItems, onNavigate }: { commerceItems: NavItem[]; onNavigate: () => void }) {
     const groups = [
-        { label: "Commercial", items: commerce },
+        { label: "Commercial", items: commerceItems },
+        { label: "Reports", items: reports },
         { label: "Assets", items: assets }, // ✅ Assets section in mobile drawer
         { label: "Projects", items: projects }, // include projects in mobile too
         { label: "Settings", items: admin },

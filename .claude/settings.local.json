@@ -5,7 +5,24 @@
       "mcp__claude_ai_Supabase__list_tables",
       "mcp__claude_ai_Supabase__list_edge_functions",
       "mcp__claude_ai_Supabase__get_edge_function",
-      "Bash(npx vercel:*)"
+      "Bash(npx vercel:*)",
+      "mcp__claude_ai_Supabase__list_projects",
+      "mcp__claude_ai_Supabase__get_advisors",
+      "mcp__claude_ai_Supabase__execute_sql",
+      "mcp__claude_ai_Supabase__apply_migration",
+      "mcp__claude_ai_Supabase__deploy_edge_function",
+      "Bash(npx tsc *)",
+      "Bash(npx next *)",
+      "Bash(echo \"tsc exit: $?\")",
+      "Bash(git check-ignore *)",
+      "Bash(xargs -0 sed -i 's/—/-/g')",
+      "Bash(grep -o '<header>.\\\\{0,400\\\\}' /c/Users/Vikil/PycharmProjects/DataPipeline/output/bizops_report.html)",
+      "Bash(grep -o 'FIGS\\)[^<]\\\\{0,400\\\\}' /c/Users/Vikil/PycharmProjects/DataPipeline/output/bizops_report.html)",
+      "Bash(python3 *)",
+      "Bash(grep -o 'Object.entries\\(FIGS\\)[^<]\\\\{0,500\\\\}' /c/Users/Vikil/PycharmProjects/DataPipeline/output/bizops_report.html)",
+      "Bash(grep -o 'newPlot\\(el[^<]\\\\{0,300\\\\}' /c/Users/Vikil/PycharmProjects/DataPipeline/output/bizops_report.html)",
+      "Bash(grep -o 'FIGS\\)\\\\.forEach[^<]\\\\{0,400\\\\}\\\\|entries\\(FIGS[^<]\\\\{0,400\\\\}\\\\|keys\\(FIGS[^<]\\\\{0,400\\\\}' /c/Users/Vikil/PycharmProjects/DataPipeline/output/bizops_report.html)",
+      "Bash(grep -o '.\\\\{200\\\\}newPlot\\(el,s\\\\.data' /c/Users/Vikil/PycharmProjects/DataPipeline/output/bizops_report.html)"
     ]
   }
 }

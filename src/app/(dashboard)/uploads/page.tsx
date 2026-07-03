@@ -4,6 +4,7 @@ import * as React from "react";
 import Papa from "papaparse";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { supabaseBrowser } from "@/lib/supabase";
+import { normalizeKey, toPriceOrZero } from "@/lib/normalize";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,9 +26,8 @@ import {
     TableRow,
 } from "@/components/ui/table";
 
-export const dynamic = "force-dynamic"; // optional safeguard
-
 const UNMAPPED = "__UNMAPPED__";
+const CHUNK_SIZE = 1000;
 
 type Supplier = { supplier_id: number; name: string };
 
@@ -43,47 +43,42 @@ const CANONICAL_FIELDS: { value: Canonical; label: string; required: boolean }[]
     { value: "mpn", label: "Manufacturer Part Number (optional)", required: false },
     { value: "description", label: "Product Description", required: true },
     { value: "price_ex_gst", label: "Price ex GST", required: true },
-    { value: "brand", label: "Brand (optional — defaults to supplier name)", required: false },
+    { value: "brand", label: "Brand (optional - defaults to supplier name)", required: false },
 ];
-
-// yyyy-mm-dd (from <input type="date">) → dd-mm-yyyy for backend
-function ymdToDmy(ymd: string): string {
-    const [y, m, d] = ymd.split("-");
-    return `${d}-${m}-${y}`;
-}
 
 // pretty ms → "2m 20s" or "41s"
 function fmtDuration(ms: number) {
-    if (!Number.isFinite(ms) || ms < 0) return "—";
+    if (!Number.isFinite(ms) || ms < 0) return "-";
     const s = Math.round(ms / 1000);
     const m = Math.floor(s / 60);
     const r = s % 60;
     return m > 0 ? `${m}m ${r}s` : `${r}s`;
 }
 
-type Row = Record<string, unknown>;
+type Row = Record<string, string>;
 type MappingState = Partial<Record<Canonical, string>>;
 
 // safe header option type
 type HeaderOpt = { key: string; label: string; value: string };
 
+type StagingRow = {
+    upload_id: number;
+    supplier_id: number;
+    supplier_sku: string;
+    supplier_description: string | null;
+    brand: string | null;
+    mpn: string | null;
+    price_ex_gst: number;
+    effective_from: string;
+    is_active: boolean;
+};
+
 async function sha256Hex(file: File): Promise<string> {
-    const subtle = typeof window !== "undefined" ? window.crypto?.subtle : undefined;
-
-    if (subtle) {
-        const buf = await file.arrayBuffer();
-        const digest = await subtle.digest("SHA-256", buf);
-        return Array.from(new Uint8Array(digest))
-            .map((b) => b.toString(16).padStart(2, "0"))
-            .join("");
-    }
-
-    const fd = new FormData();
-    fd.append("file", file);
-    const res = await fetch("/api/hash", { method: "POST", body: fd });
-    if (!res.ok) throw new Error("Failed to hash file");
-    const { hex } = await res.json();
-    return hex as string;
+    const buf = await file.arrayBuffer();
+    const digest = await window.crypto.subtle.digest("SHA-256", buf);
+    return Array.from(new Uint8Array(digest))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
 }
 
 export default function Page() {
@@ -91,6 +86,7 @@ export default function Page() {
     React.useEffect(() => {
         setSb(supabaseBrowser());
     }, []);
+
     // suppliers
     const [suppliers, setSuppliers] = React.useState<Supplier[]>([]);
     const [suppliersLoading, setSuppliersLoading] = React.useState(false);
@@ -101,19 +97,18 @@ export default function Page() {
     const [newSupplierName, setNewSupplierName] = React.useState("");
     const [creatingSupplier, setCreatingSupplier] = React.useState(false);
 
-    // csv
+    // csv - the file is parsed ONCE and all rows are kept in memory
     const [file, setFile] = React.useState<File | null>(null);
     const [fileName, setFileName] = React.useState<string>("");
     const [headers, setHeaders] = React.useState<string[]>([]);
-    const [rowsPreview, setRowsPreview] = React.useState<Row[]>([]);
-    const [totalParsed, setTotalParsed] = React.useState<number>(0);
+    const [allRows, setAllRows] = React.useState<Row[]>([]);
     const [previewLimit, setPreviewLimit] = React.useState<number>(100);
 
     // mapping (canonical -> csv header STRING)
     const [mapping, setMapping] = React.useState<MappingState>({});
     const [submitting, setSubmitting] = React.useState(false);
 
-    // effective date (global) — default = today
+    // effective date (global) - default = today
     const today = React.useMemo(() => {
         const t = new Date();
         const y = t.getFullYear();
@@ -121,17 +116,14 @@ export default function Page() {
         const d = String(t.getDate()).padStart(2, "0");
         return `${y}-${m}-${d}`;
     }, []);
-    const [effectiveDateYMD, setEffectiveDateYMD] = React.useState<string>(today);
+    const [effectiveDate, setEffectiveDate] = React.useState<string>(today);
 
     // progress UI state
-    const [limitPerBatch] = React.useState(70);
-    const [totalRowsServer, setTotalRowsServer] = React.useState<number | null>(null);
+    const [progressLabel, setProgressLabel] = React.useState<string>("");
     const [totalBatches, setTotalBatches] = React.useState<number | null>(null);
     const [currentBatch, setCurrentBatch] = React.useState<number>(0);
     const [elapsedMs, setElapsedMs] = React.useState<number>(0);
-    const [lastBatchMs, setLastBatchMs] = React.useState<number>(0);
-    const [avgBatchMs, setAvgBatchMs] = React.useState<number>(0);
-    const [etaMs, setEtaMs] = React.useState<number | null>(null);
+    const [skippedRows, setSkippedRows] = React.useState<number>(0);
 
     // load suppliers
     React.useEffect(() => {
@@ -152,37 +144,28 @@ export default function Page() {
         if (!f) return;
         setFile(f);
         setFileName(f.name);
-
-        // Parse entire CSV but only keep first N rows for preview
-        const preview: Row[] = [];
-        let count = 0;
         setHeaders([]);
+        setAllRows([]);
+        setMapping({});
+
         Papa.parse<Row>(f, {
             header: true,
-            dynamicTyping: true,
+            dynamicTyping: false,
             skipEmptyLines: "greedy",
             worker: true,
-            chunkSize: 1024 * 512,
-            chunk: (res: Papa.ParseResult<Row>) => {
-                if (!headers.length) {
-                    const hdrs = res.meta.fields ?? Object.keys(res.data[0] ?? {});
-                    setHeaders(hdrs);
-                    // initialize mapping to "unmapped" for all canonicals
-                    const init: MappingState = {};
-                    setMapping(init);
-                }
-                for (const r of res.data) {
-                    count++;
-                    if (preview.length < previewLimit) preview.push(r);
-                }
-            },
-            complete: () => {
-                setRowsPreview(preview);
-                setTotalParsed(count);
+            complete: (res) => {
+                const rows = res.data.filter((r) => r && Object.keys(r).length);
+                setHeaders(res.meta.fields ?? Object.keys(rows[0] ?? {}));
+                setAllRows(rows);
             },
             error: (err) => alert(`Parse error: ${err.message}`),
         });
     };
+
+    const rowsPreview = React.useMemo(
+        () => allRows.slice(0, previewLimit),
+        [allRows, previewLimit]
+    );
 
     // safe header options
     const headerOpts = React.useMemo<HeaderOpt[]>(() => {
@@ -247,12 +230,54 @@ export default function Page() {
         setShowCreate(false);
     }
 
+    // Port of the old edge-function row normalization, now done in-browser.
+    function buildStagingRows(uploadId: number, supplierId: number, supplierName: string) {
+        const rows: StagingRow[] = [];
+        let skipped = 0;
+
+        const skuH = mapping.supplier_sku;
+        const mpnH = mapping.mpn;
+        const descH = mapping.description;
+        const priceH = mapping.price_ex_gst;
+        const brandH = mapping.brand;
+
+        for (const r of allRows) {
+            const mpnNorm = normalizeKey(mpnH ? r[mpnH] : null);
+
+            let skuRaw = skuH ? String(r[skuH] ?? "").trim() : "";
+            if (!skuRaw && mpnNorm) skuRaw = mpnNorm;
+            const sku = normalizeKey(skuRaw).toUpperCase();
+            if (!sku) {
+                skipped++;
+                continue;
+            }
+
+            const desc = descH ? String(r[descH] ?? "").trim() : "";
+            const brandRaw = brandH ? String(r[brandH] ?? "").trim() : "";
+
+            rows.push({
+                upload_id: uploadId,
+                supplier_id: supplierId,
+                supplier_sku: sku,
+                supplier_description: desc ? desc.toUpperCase() : null,
+                brand: brandRaw || supplierName,
+                mpn: mpnNorm || null,
+                price_ex_gst: toPriceOrZero(priceH ? r[priceH] : null),
+                effective_from: effectiveDate,
+                is_active: true,
+            });
+        }
+
+        return { rows, skipped };
+    }
+
     const handleSubmit = async () => {
         try {
             if (!sb) return;
             if (!file) return alert("Choose a CSV file");
-            if (!selectedSupplierId) return alert("Select a supplier");
-            if (!effectiveDateYMD) return alert("Please pick an effective date.");
+            if (!selectedSupplierId || !selectedSupplier) return alert("Select a supplier");
+            if (!effectiveDate) return alert("Please pick an effective date.");
+            if (!allRows.length) return alert("The CSV appears to have no data rows.");
 
             // validate required canonicals are mapped
             const missingRequired = CANONICAL_FIELDS
@@ -265,8 +290,14 @@ export default function Page() {
             }
 
             setSubmitting(true);
+            setTotalBatches(null);
+            setCurrentBatch(0);
+            setElapsedMs(0);
+            setSkippedRows(0);
+            const startedAt = Date.now();
 
-            // 1) hash & upload file
+            // 1) hash & archive the file in storage
+            setProgressLabel("Uploading file…");
             const sha256 = await sha256Hex(file);
             const storagePath = `${selectedSupplierId}/${sha256}.csv`;
             const { error: upErr } = await sb.storage
@@ -274,130 +305,69 @@ export default function Page() {
                 .upload(storagePath, file, { upsert: true, contentType: "text/csv" });
             if (upErr) throw upErr;
 
-            // 2) create upload row
+            // 2) create (or reuse, for a re-upload of the same file) the upload row
             const { data: uploadRow, error: insErr } = await sb
                 .from("upload")
-                .insert({ supplier_id: selectedSupplierId, filename: file.name, sha256, parsed_ok: false })
-                .select("*")
+                .upsert(
+                    {
+                        supplier_id: selectedSupplierId,
+                        filename: file.name,
+                        sha256,
+                        parsed_ok: false,
+                        row_count: allRows.length,
+                    },
+                    { onConflict: "supplier_id,sha256" }
+                )
+                .select("upload_id")
                 .single();
             if (insErr) throw insErr;
+            const uploadId = (uploadRow as { upload_id: number }).upload_id;
 
-            // --- BUILD WIRE MAPPING (only mapped canonicals go over the wire) ---
-            const wireMapping: Partial<Record<Canonical, string>> = {};
-            (Object.keys(mapping) as Canonical[]).forEach((k) => {
-                const v = mapping[k];
-                if (v != null && v !== "") wireMapping[k] = v;
-            });
+            // 3) normalize rows locally and stage them in chunks
+            const { rows: stagingRows, skipped } = buildStagingRows(
+                uploadId,
+                selectedSupplierId,
+                selectedSupplier.name
+            );
+            setSkippedRows(skipped);
+            if (!stagingRows.length) throw new Error("No valid rows to ingest (every row is missing a SKU).");
 
-            // 2b) clear existing products for this supplier so the upload starts fresh
+            // clear any leftovers from a previously failed attempt
             const { error: clearErr } = await sb
-                .from("supplier_product")
+                .from("ingest_staging")
                 .delete()
-                .eq("supplier_id", selectedSupplierId);
+                .eq("upload_id", uploadId);
             if (clearErr) throw clearErr;
 
-            // 3) trigger ingestion in CHUNKS (70) with live progress
-            const effective_date_ddmmyyyy = ymdToDmy(effectiveDateYMD);
+            const batches = Math.ceil(stagingRows.length / CHUNK_SIZE);
+            setTotalBatches(batches);
 
-            // reset progress state (UI)
-            setCurrentBatch(0);
-            setElapsedMs(0);
-            setLastBatchMs(0);
-            setAvgBatchMs(0);
-            setEtaMs(null);
-            setTotalRowsServer(null);
-            setTotalBatches(null);
-
-            const startedAt = Date.now();
-            let nextOffset: number | null = 0;
-            let completedBatches = 0;
-
-            // locals
-            let localTotalRows: number | null = null;
-            let localTotalBatches: number | null = null;
-            let localAvgMs = 0;
-
-            async function callChunk(offset: number) {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => controller.abort(), 140_000);
-
-                try {
-                    const resp = await fetch("/api/ingest", {
-                        method: "POST",
-                        headers: { "content-type": "application/json" },
-                        signal: controller.signal,
-                        body: JSON.stringify({
-                            upload_id: uploadRow.upload_id,
-                            effective_date_ddmmyyyy,
-                            offset,
-                            limit: limitPerBatch,
-                            mapping: wireMapping, // <-- SEND MAPPING TO EDGE FUNCTION
-                        }),
-                    });
-
-                    const text = await resp.text();
-                    let json: unknown = text;
-                    try {
-                        json = JSON.parse(text) as unknown;
-                    } catch { /* leave as raw text */ }
-
-                    if (!resp.ok) {
-                        throw new Error(typeof json === "string" ? json : JSON.stringify(json));
-                    }
-                    return json as {
-                        ok: true;
-                        processed: number;
-                        nextOffset: number | null;
-                        totalRows: number;
-                        done: boolean;
-                    };
-                } finally {
-                    clearTimeout(timeoutId);
-                }
+            for (let i = 0; i < batches; i++) {
+                setProgressLabel(`Staging rows (batch ${i + 1} of ${batches})…`);
+                const chunk = stagingRows.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+                const { error: stErr } = await sb.from("ingest_staging").insert(chunk);
+                if (stErr) throw stErr;
+                setCurrentBatch(i + 1);
+                setElapsedMs(Date.now() - startedAt);
             }
 
-            while (nextOffset !== null) {
-                const batchStart = Date.now();
+            // 4) atomic swap: delete old catalogue + insert staged rows in one transaction
+            setProgressLabel("Finalizing (atomic swap)…");
+            const { data: result, error: finErr } = await sb.rpc("finalize_ingest", {
+                p_upload_id: uploadId,
+            });
+            if (finErr) throw finErr;
 
-                let res;
-                try {
-                    res = await callChunk(nextOffset);
-                } catch {
-                    // retry once
-                    await new Promise((r) => setTimeout(r, 800));
-                    res = await callChunk(nextOffset);
-                }
-
-                if (localTotalRows == null && typeof res.totalRows === "number") {
-                    localTotalRows = res.totalRows;
-                    localTotalBatches = Math.max(1, Math.ceil(localTotalRows / limitPerBatch));
-                    setTotalRowsServer(localTotalRows);
-                    setTotalBatches(localTotalBatches);
-                }
-
-                nextOffset = res.done ? null : res.nextOffset;
-
-                const thisBatchMs = Date.now() - batchStart;
-                completedBatches += 1;
-
-                const totalElapsed = Date.now() - startedAt;
-                localAvgMs = Math.round(totalElapsed / completedBatches);
-                const remainingBatches =
-                    localTotalBatches != null ? Math.max(0, localTotalBatches - completedBatches) : null;
-                const localEta = remainingBatches != null ? remainingBatches * localAvgMs : null;
-
-                setCurrentBatch(completedBatches - 1);
-                setLastBatchMs(thisBatchMs);
-                setElapsedMs(totalElapsed);
-                setAvgBatchMs(localAvgMs);
-                setEtaMs(localEta);
-
-                await new Promise((r) => setTimeout(r, 0));
-            }
-
-            alert(`Upload saved for supplier "${selectedSupplier?.name}". Ingest completed.`);
+            setElapsedMs(Date.now() - startedAt);
+            setProgressLabel("Done");
+            const inserted = (result as { inserted?: number })?.inserted ?? stagingRows.length;
+            alert(
+                `Ingest completed for "${selectedSupplier.name}": ${inserted.toLocaleString()} items` +
+                (skipped ? ` (${skipped.toLocaleString()} rows skipped - no SKU)` : "")
+            );
         } catch (e: unknown) {
             console.error(e);
+            setProgressLabel("Failed");
             const msg = e instanceof Error ? e.message : "Something went wrong";
             alert(msg);
         } finally {
@@ -406,9 +376,7 @@ export default function Page() {
     };
 
     return (
-        /* Full-width like Items (no max-w) */
         <div className="p-4 md:p-6 lg:p-8 space-y-4">
-            {/* Removed breadcrumbs prop */}
             <PageHeader
                 title="New Upload"
                 subtitle="Map columns and ingest your price list."
@@ -466,7 +434,7 @@ export default function Page() {
                         <Input id="csv" type="file" accept=".csv,text/csv" onChange={onFileChange} />
                         {fileName && (
                             <p className="text-sm text-muted-foreground">
-                                Loaded: {fileName} — Parsed rows: {totalParsed.toLocaleString()}
+                                Loaded: {fileName} - Parsed rows: {allRows.length.toLocaleString()}
                             </p>
                         )}
                     </div>
@@ -477,8 +445,8 @@ export default function Page() {
                         <Input
                             id="effdate"
                             type="date"
-                            value={effectiveDateYMD}
-                            onChange={(e) => setEffectiveDateYMD(e.target.value)}
+                            value={effectiveDate}
+                            onChange={(e) => setEffectiveDate(e.target.value)}
                             className="w-60"
                         />
                         <p className="text-xs text-muted-foreground">
@@ -505,10 +473,10 @@ export default function Page() {
                                             onValueChange={(v) => onMapCanonical(c.value, v)}
                                         >
                                             <SelectTrigger className="w-72">
-                                                <SelectValue placeholder="— Unmapped —" />
+                                                <SelectValue placeholder="Unmapped" />
                                             </SelectTrigger>
                                             <SelectContent className="bg-white text-foreground border">
-                                                <SelectItem value={UNMAPPED}>— Unmapped —</SelectItem>
+                                                <SelectItem value={UNMAPPED}>Unmapped</SelectItem>
                                                 {headerOpts.map((o) => (
                                                     <SelectItem key={o.key} value={o.key}>
                                                         {o.label}
@@ -527,17 +495,17 @@ export default function Page() {
                             )}
 
                             <p className="text-xs text-muted-foreground">
-                                Brand can be left unmapped; the backend will default it to the supplier name.
+                                Brand can be left unmapped; it defaults to the supplier name.
                             </p>
                         </div>
                     )}
 
-                    {/* CSV preview table (full-width, larger) */}
+                    {/* CSV preview table */}
                     {headers.length > 0 && rowsPreview.length > 0 && (
                         <div className="space-y-3">
                             <div className="flex items-center justify-between">
                                 <Label>
-                                    CSV Preview (first {rowsPreview.length} of {totalParsed.toLocaleString()} rows)
+                                    CSV Preview (first {rowsPreview.length} of {allRows.length.toLocaleString()} rows)
                                 </Label>
                                 <div className="flex items-center gap-2">
                                     <Label htmlFor="limit" className="text-xs text-muted-foreground">
@@ -553,10 +521,6 @@ export default function Page() {
                                         onChange={(e) => {
                                             const v = Math.max(10, Math.min(5000, Number(e.target.value || 100)));
                                             setPreviewLimit(v);
-                                            if (file) {
-                                                const evt = { target: { files: [file] } } as unknown as React.ChangeEvent<HTMLInputElement>;
-                                                onFileChange(evt);
-                                            }
                                         }}
                                     />
                                 </div>
@@ -579,7 +543,7 @@ export default function Page() {
                                                 <TableRow key={`r-${ridx}`}>
                                                     {headers.map((h, cidx) => (
                                                         <TableCell key={`td-${ridx}-${cidx}`}>
-                                                            {String((row[h] ?? "") as unknown)}
+                                                            {String(row[h] ?? "")}
                                                         </TableCell>
                                                     ))}
                                                 </TableRow>
@@ -592,20 +556,14 @@ export default function Page() {
                     )}
 
                     {/* Live progress */}
-                    {(submitting || totalRowsServer !== null) && (
+                    {(submitting || totalBatches !== null) && (
                         <div className="space-y-2 rounded-md border p-4">
                             <div className="flex items-center justify-between">
-                                <div className="text-sm font-medium">
-                                    {totalBatches != null ? (
-                                        <>Batch {Math.min(currentBatch + 1, totalBatches)} / {totalBatches}</>
-                                    ) : (
-                                        <>Calculating batches…</>
-                                    )}
-                                </div>
+                                <div className="text-sm font-medium">{progressLabel || "Working…"}</div>
                                 <div className="text-xs text-muted-foreground">
-                                    {totalRowsServer != null
-                                        ? `${totalRowsServer.toLocaleString()} rows · ${limitPerBatch} per batch`
-                                        : "—"}
+                                    {totalBatches != null
+                                        ? `${currentBatch} / ${totalBatches} batches · ${CHUNK_SIZE.toLocaleString()} rows per batch`
+                                        : "-"}
                                 </div>
                             </div>
 
@@ -614,8 +572,8 @@ export default function Page() {
                                     className="h-2 rounded bg-primary transition-all"
                                     style={{
                                         width:
-                                            totalBatches != null
-                                                ? `${Math.min(100, ((currentBatch + 1) / totalBatches) * 100)}%`
+                                            totalBatches != null && totalBatches > 0
+                                                ? `${Math.min(100, (currentBatch / totalBatches) * 100)}%`
                                                 : "0%",
                                     }}
                                 />
@@ -623,20 +581,12 @@ export default function Page() {
 
                             <div className="grid grid-cols-2 gap-2 text-xs">
                                 <div className="space-y-0.5">
-                                    <div className="text-muted-foreground">Last batch</div>
-                                    <div className="font-medium">{fmtDuration(lastBatchMs)}</div>
-                                </div>
-                                <div className="space-y-0.5">
-                                    <div className="text-muted-foreground">Avg / batch</div>
-                                    <div className="font-medium">{fmtDuration(avgBatchMs)}</div>
-                                </div>
-                                <div className="space-y-0.5">
                                     <div className="text-muted-foreground">Elapsed</div>
                                     <div className="font-medium">{fmtDuration(elapsedMs)}</div>
                                 </div>
                                 <div className="space-y-0.5">
-                                    <div className="text-muted-foreground">ETA</div>
-                                    <div className="font-medium">{etaMs == null ? "—" : fmtDuration(etaMs)}</div>
+                                    <div className="text-muted-foreground">Rows skipped (no SKU)</div>
+                                    <div className="font-medium">{skippedRows.toLocaleString()}</div>
                                 </div>
                             </div>
                         </div>

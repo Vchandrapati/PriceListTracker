@@ -167,7 +167,7 @@ export default function AssetsDashboardPage() {
                 {/* Vehicles activity */}
                 <Card>
                     <CardContent className="p-5 space-y-2">
-                        <div className="text-sm font-medium">Vehicles — Activity</div>
+                        <div className="text-sm font-medium">Vehicles - Activity</div>
                         <div className="rounded-xl border bg-card overflow-hidden">
                             <div className="overflow-x-auto">
                                 <Table className="w-full min-w-[700px] text-[14px]">
@@ -201,7 +201,7 @@ export default function AssetsDashboardPage() {
                 {/* Tools activity */}
                 <Card>
                     <CardContent className="p-5 space-y-2">
-                        <div className="text-sm font-medium">Tools — Activity</div>
+                        <div className="text-sm font-medium">Tools - Activity</div>
                         <div className="rounded-xl border bg-card overflow-hidden">
                             <div className="overflow-x-auto">
                                 <Table className="w-full min-w-[700px] text-[14px]">

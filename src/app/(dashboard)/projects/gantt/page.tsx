@@ -304,7 +304,7 @@ function GanttChart({
         rows.push({
             kind: "project",
             pIdx,
-            label: `${p.jobNumber} — ${p.jobName}`,
+            label: `${p.jobNumber} - ${p.jobName}`,
         });
         p.subtasks.forEach((s, sIdx) =>
             rows.push({
@@ -358,7 +358,7 @@ function GanttChart({
             <CardContent className="p-4">
                 <div className="flex items-center justify-between mb-3">
                     <div className="text-sm font-medium">
-                        Gantt — Active Projects & Subtasks
+                        Gantt - Active Projects & Subtasks
                     </div>
                     <div className="flex items-center gap-2 text-xs">
                         <span className="text-muted-foreground">Zoom</span>
@@ -503,7 +503,7 @@ function GanttChart({
                                             {/* Project bar */}
                                             <div
                                                 className={`absolute rounded ${pColor}`}
-                                                title={`${p.jobNumber} — ${p.jobName}`}
+                                                title={`${p.jobNumber} - ${p.jobName}`}
                                                 style={{ left: projX, width: projW, ...barCommon }}
                                             />
 

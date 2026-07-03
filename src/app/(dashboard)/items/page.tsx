@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { SupabaseClient } from "@supabase/supabase-js";
+import { normalizeKey } from "@/lib/normalize";
 
 type Supplier = { supplier_id: number; name: string };
 type Brand = { name: string };
@@ -28,19 +29,6 @@ type ItemRow = {
 };
 
 const PAGE_SIZE = 50;
-
-// same normalization you use in ingestion
-function normalizeKey(x: string) {
-    if (x == null) return "";
-    let s = String(x).trim();
-    if (!s) return "";
-    s = s.replace(/&/g, ","); // & -> ,
-    s = s.replace(/\s*,\s*/g, ","); // spaces around commas -> single comma
-    s = s.replace(/\s+/g, "-"); // whitespace -> -
-    s = s.replace(/-+/g, "-"); // collapse ---
-    s = s.replace(/^[-,]+|[-,]+$/g, ""); // trim leading/trailing - or ,
-    return s;
-}
 
 export default function ItemsPage() {
     const [sb, setSb] = React.useState<SupabaseClient | null>(null);
@@ -264,14 +252,14 @@ export default function ItemsPage() {
                                         rows.map((r) => (
                                             <TableRow key={r.supplier_product_id}>
                                                 <TableCell>{r.supplier_name}</TableCell>
-                                                <TableCell>{r.brand_name ?? "—"}</TableCell>
-                                                <TableCell>{r.mpn ?? "—"}</TableCell>
-                                                <TableCell>{r.supplier_sku ?? "—"}</TableCell>
-                                                <TableCell className="max-w-[700px] truncate">{r.supplier_description || "—"}</TableCell>
+                                                <TableCell>{r.brand_name ?? "-"}</TableCell>
+                                                <TableCell>{r.mpn ?? "-"}</TableCell>
+                                                <TableCell>{r.supplier_sku ?? "-"}</TableCell>
+                                                <TableCell className="max-w-[700px] truncate">{r.supplier_description || "-"}</TableCell>
                                                 <TableCell className="text-right">
-                                                    {r.price_ex_gst != null ? r.price_ex_gst.toFixed(2) : "—"}
+                                                    {r.price_ex_gst != null ? r.price_ex_gst.toFixed(2) : "-"}
                                                 </TableCell>
-                                                <TableCell>{r.effective_from ?? "—"}</TableCell>
+                                                <TableCell>{r.effective_from ?? "-"}</TableCell>
                                             </TableRow>
                                         ))}
 
@@ -292,7 +280,7 @@ export default function ItemsPage() {
                         <div className="text-sm text-muted-foreground">
                             {total != null
                                 ? `Showing ${(rows.length && (page - 1) * PAGE_SIZE + 1) || 0}-${(page - 1) * PAGE_SIZE + rows.length} of ${total}`
-                                : "—"}
+                                : "-"}
                         </div>
                         <div className="flex gap-2">
                             <Button

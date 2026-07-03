@@ -423,7 +423,7 @@ export default function ExportPage() {
                                 value={supplierId ?? ""}
                                 onChange={(e) => setSupplierId(e.target.value ? Number(e.target.value) : null)}
                             >
-                                <option value="">— Select supplier —</option>
+                                <option value="">Select supplier</option>
                                 {suppliers.map((s) => (
                                     <option key={s.supplier_id} value={s.supplier_id}>{s.name}</option>
                                 ))}
