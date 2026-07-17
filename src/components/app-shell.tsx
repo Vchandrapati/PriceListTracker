@@ -25,6 +25,7 @@ import {
     PanelLeftClose,
     ChartBarStacked,
     LayoutDashboard,
+    Workflow,
 } from "lucide-react";
 
 import type { LucideIcon } from "lucide-react";
@@ -52,6 +53,7 @@ const assets: NavItem[] = [
 ];
 
 const projects: NavItem[] = [
+    { title: "Task Wallboard", href: "/projects/tasks", icon: Workflow },
     { title: "Project Timelines", href: "/projects/gantt", icon: ChartBarStacked },
 ];
 
